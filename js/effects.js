@@ -1,0 +1,188 @@
+// Efectos: trazadoras, chispas, sangre, marcas de bala, humo, explosiones y destellos.
+import * as THREE from 'three';
+
+function softTex(inner, outer) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d');
+  const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gr.addColorStop(0, inner);
+  gr.addColorStop(1, outer);
+  g.fillStyle = gr;
+  g.fillRect(0, 0, 64, 64);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+function smokeTex() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d');
+  for (let i = 0; i < 26; i++) {
+    const x = 64 + (Math.random() - 0.5) * 50, y = 64 + (Math.random() - 0.5) * 50, r = 20 + Math.random() * 30;
+    const gr = g.createRadialGradient(x, y, 0, x, y, r);
+    gr.addColorStop(0, 'rgba(255,255,255,0.35)');
+    gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr;
+    g.fillRect(0, 0, 128, 128);
+  }
+  return new THREE.CanvasTexture(c);
+}
+
+export class Effects {
+  constructor(scene) {
+    this.scene = scene;
+    this.items = [];
+    this.smokes = [];
+    this.tex = {
+      glow: softTex('rgba(255,230,160,1)', 'rgba(255,140,40,0)'),
+      spark: softTex('rgba(255,250,220,1)', 'rgba(255,200,80,0)'),
+      blood: softTex('rgba(150,10,10,0.95)', 'rgba(90,0,0,0)'),
+      dust: softTex('rgba(200,180,140,0.7)', 'rgba(200,180,140,0)'),
+      fire: softTex('rgba(255,220,120,1)', 'rgba(255,80,0,0)'),
+      smoke: smokeTex(),
+    };
+    this.decalGeo = new THREE.PlaneGeometry(0.09, 0.09);
+    this.decalMat = new THREE.MeshBasicMaterial({ map: softTex('rgba(20,15,10,0.95)', 'rgba(20,15,10,0)'), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4 });
+    this.decals = [];
+    this.tracerMat = new THREE.LineBasicMaterial({ color: '#ffe7a0', transparent: true, opacity: 0.8 });
+  }
+
+  sprite(tex, pos, size, color = '#fff', additive = true, opacity = 1) {
+    const m = new THREE.SpriteMaterial({ map: tex, color, transparent: true, depthWrite: false, opacity, blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending });
+    const s = new THREE.Sprite(m);
+    s.position.copy(pos);
+    s.scale.setScalar(size);
+    this.scene.add(s);
+    return s;
+  }
+
+  add(obj, life, update) {
+    this.items.push({ obj, life, age: 0, update });
+  }
+
+  tracer(from, to) {
+    const dir = to.clone().sub(from);
+    const len = dir.length();
+    if (len < 1) return;
+    const start = from.clone().addScaledVector(dir, Math.min(0.15, 1.5 / len));
+    const geo = new THREE.BufferGeometry().setFromPoints([start, to]);
+    const line = new THREE.Line(geo, this.tracerMat.clone());
+    this.scene.add(line);
+    this.add(line, 0.07, (o, k) => { o.material.opacity = 0.8 * (1 - k); });
+  }
+
+  impact(pos, normal) {
+    const n = normal || new THREE.Vector3(0, 1, 0);
+    // marca de bala
+    const d = new THREE.Mesh(this.decalGeo, this.decalMat);
+    d.position.copy(pos).addScaledVector(n, 0.01);
+    d.lookAt(d.position.clone().add(n));
+    d.rotation.z = Math.random() * 6;
+    this.scene.add(d);
+    this.decals.push(d);
+    if (this.decals.length > 160) this.scene.remove(this.decals.shift());
+    // polvo y chispas
+    const dust = this.sprite(this.tex.dust, pos.clone().addScaledVector(n, 0.08), 0.25, '#fff', false, 0.8);
+    this.add(dust, 0.5, (o, k) => { o.scale.setScalar(0.25 + k * 0.5); o.material.opacity = 0.8 * (1 - k); o.position.y += 0.004; });
+    for (let i = 0; i < 3; i++) {
+      const s = this.sprite(this.tex.spark, pos.clone(), 0.05);
+      const v = n.clone().multiplyScalar(2 + Math.random() * 2).add(new THREE.Vector3((Math.random() - 0.5) * 3, Math.random() * 2, (Math.random() - 0.5) * 3));
+      this.add(s, 0.18 + Math.random() * 0.1, (o, k, dt) => { o.position.addScaledVector(v, dt); v.y -= 9 * dt; o.material.opacity = 1 - k; });
+    }
+  }
+
+  blood(pos, dir, head) {
+    const count = head ? 10 : 5;
+    for (let i = 0; i < count; i++) {
+      const s = this.sprite(this.tex.blood, pos.clone(), 0.12 + Math.random() * 0.15, '#fff', false);
+      const v = dir.clone().multiplyScalar(1.5 + Math.random() * 2).add(new THREE.Vector3((Math.random() - 0.5) * 2, Math.random() * 1.5, (Math.random() - 0.5) * 2));
+      this.add(s, 0.35 + Math.random() * 0.2, (o, k, dt) => { o.position.addScaledVector(v, dt); v.y -= 9 * dt; o.material.opacity = 1 - k; o.scale.setScalar(o.scale.x * (1 + dt)); });
+    }
+  }
+
+  muzzleFlash(pos, big = 1) {
+    const s = this.sprite(this.tex.fire, pos, 0.35 * big);
+    s.material.rotation = Math.random() * 6;
+    this.add(s, 0.05, (o, k) => { o.material.opacity = 1 - k; });
+    const light = new THREE.PointLight('#ffb35a', 6 * big, 7, 2);
+    light.position.copy(pos);
+    this.scene.add(light);
+    this.add(light, 0.05, (o, k) => { o.intensity = 6 * big * (1 - k); });
+  }
+
+  explosion(pos, big) {
+    const scale = big ? 3 : 1;
+    const light = new THREE.PointLight('#ffa040', 60 * scale, 25 * scale, 2);
+    light.position.copy(pos).add(new THREE.Vector3(0, 1, 0));
+    this.scene.add(light);
+    this.add(light, 0.5, (o, k) => { o.intensity = 60 * scale * (1 - k); });
+    const fb = this.sprite(this.tex.fire, pos.clone().add(new THREE.Vector3(0, 0.8, 0)), 2 * scale);
+    this.add(fb, 0.5, (o, k) => { o.scale.setScalar((2 + k * 5) * scale); o.material.opacity = 1 - k; });
+    for (let i = 0; i < 18 * scale; i++) {
+      const s = this.sprite(this.tex.fire, pos.clone().add(new THREE.Vector3(0, 0.3, 0)), 0.5 + Math.random() * 0.8);
+      const v = new THREE.Vector3((Math.random() - 0.5) * 14, Math.random() * 10, (Math.random() - 0.5) * 14).multiplyScalar(big ? 1.5 : 1);
+      this.add(s, 0.5 + Math.random() * 0.4, (o, k, dt) => { o.position.addScaledVector(v, dt); v.multiplyScalar(0.92); o.material.opacity = 1 - k; });
+    }
+    for (let i = 0; i < 12 * scale; i++) {
+      const s = this.sprite(this.tex.smoke, pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 2, 0.5 + Math.random(), (Math.random() - 0.5) * 2)), 2 * scale, '#444', false, 0.8);
+      this.add(s, 2.5, (o, k, dt) => { o.position.y += dt * 1.5; o.scale.setScalar((2 + k * 4) * scale); o.material.opacity = 0.7 * (1 - k); });
+    }
+  }
+
+  flashPop(pos) {
+    const s = this.sprite(this.tex.glow, pos, 6, '#fff');
+    this.add(s, 0.25, (o, k) => { o.material.opacity = 1 - k; o.scale.setScalar(6 + k * 6); });
+    const light = new THREE.PointLight('#ffffff', 80, 30, 2);
+    light.position.copy(pos);
+    this.scene.add(light);
+    this.add(light, 0.25, (o, k) => { o.intensity = 80 * (1 - k); });
+  }
+
+  smoke(pos, duration = 18) {
+    const group = new THREE.Group();
+    group.position.copy(pos);
+    const puffs = [];
+    for (let i = 0; i < 46; i++) {
+      const m = new THREE.SpriteMaterial({ map: this.tex.smoke, color: new THREE.Color().setHSL(0, 0, 0.72 + Math.random() * 0.12), transparent: true, depthWrite: false, opacity: 0 });
+      m.rotation = Math.random() * 6;
+      const s = new THREE.Sprite(m);
+      const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * 3.2;
+      const target = new THREE.Vector3(Math.cos(a) * r, Math.random() * 3.2, Math.sin(a) * r);
+      s.position.set(0, 0.3, 0);
+      group.add(s);
+      puffs.push({ s, target, size: 2.6 + Math.random() * 1.8 });
+    }
+    this.scene.add(group);
+    this.add(group, duration, (o, k, dt, age) => {
+      const grow = Math.min(1, age / 1.4);
+      const fade = age > duration - 2.5 ? (duration - age) / 2.5 : 1;
+      for (const p of puffs) {
+        p.s.position.lerp(p.target, Math.min(1, dt * 2.2));
+        p.s.scale.setScalar(p.size * (0.4 + 0.6 * grow));
+        p.s.material.opacity = 0.92 * grow * fade;
+        p.s.material.rotation += dt * 0.05;
+      }
+    });
+  }
+
+  update(dt) {
+    for (let i = this.items.length - 1; i >= 0; i--) {
+      const it = this.items[i];
+      it.age += dt;
+      const k = Math.min(1, it.age / it.life);
+      if (it.update) it.update(it.obj, k, dt, it.age);
+      if (it.age >= it.life) {
+        this.scene.remove(it.obj);
+        it.obj.traverse?.(o => { if (o.material && o.material !== this.decalMat && o.material !== this.tracerMat) o.material.dispose?.(); if (o.geometry && !o.isSprite && o.geometry !== this.decalGeo) o.geometry.dispose?.(); });
+        this.items.splice(i, 1);
+      }
+    }
+  }
+
+  clearRound() {
+    for (const d of this.decals) this.scene.remove(d);
+    this.decals = [];
+  }
+}
