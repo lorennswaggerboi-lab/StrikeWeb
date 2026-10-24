@@ -325,6 +325,7 @@ export class Game {
         if (this.ui.sb) this.hud.renderScoreboard();
         break;
       case 'bought': this.sound.buy(); break;
+      case 'refunded': this.sound.pickup(); this.hud.center(`Reembolsado +$${m.price}`, '', 1000); break;
     }
   }
 
@@ -645,6 +646,7 @@ export class Game {
   }
 
   buy(id) { this.send({ t: 'b', item: id }); }
+  refund(id) { this.send({ t: 'rf', item: id }); }
 
   pressUse() {
     if (this.usingKey || !this.alive) return;

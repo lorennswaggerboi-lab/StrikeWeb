@@ -344,3 +344,6 @@ input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
 .notif .acts { display: flex; gap: 6px; margin-top: 6px; }
 .notif .btn { padding: 5px 12px; font-size: 14px; }
 @keyframes nin { from { transform: translateX(30px); opacity: 0; } }
+
+.bitem.canrefund { border-color: var(--accent); background: rgba(245,165,36,.1); }
+.bitem.canrefund .pr { color: var(--accent); }

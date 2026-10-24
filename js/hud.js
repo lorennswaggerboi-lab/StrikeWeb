@@ -321,7 +321,9 @@ export class Hud {
         b.className = 'bitem';
         b.innerHTML = `<img src="${icon(id)}" alt=""><span>${esc(info.name)}</span><span class="pr">$${info.price}</span>`;
         b.dataset.id = id;
-        b.addEventListener('click', () => this.game.buy(id));
+        b.addEventListener('click', () => (b.classList.contains('canrefund') ? this.game.refund(id) : this.game.buy(id)));
+        // clic derecho: reembolsar (como en CS2)
+        b.addEventListener('contextmenu', e => { e.preventDefault(); this.game.refund(id); });
         col.appendChild(b);
         this.buyButtons.push(b);
       }
@@ -348,10 +350,13 @@ export class Hud {
       else if (id === 'vest') owned = me.ar >= 100;
       else if (id === 'vesthelm') owned = me.ar >= 100 && me.hm;
       else if (id === 'defuser') owned = !!me.df;
-      b.disabled = wrongTeam || owned || me.mo < price || !me.cb;
+      const canRefund = (me.rf || []).includes(id);
+      b.disabled = !canRefund && (wrongTeam || owned || me.mo < price || !me.cb);
       b.classList.toggle('owned', owned);
+      b.classList.toggle('canrefund', canRefund && owned);
+      b.title = canRefund ? 'Clic derecho para reembolsar' : '';
       b.classList.toggle('hidden', !!wrongTeam);
-      b.querySelector('.pr').textContent = '$' + price;
+      b.querySelector('.pr').textContent = canRefund && owned ? '↺ Reembolsar' : '$' + price;
     }
   }
 

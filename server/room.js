@@ -387,6 +387,7 @@ export class Room {
       case 'r': this.startReload(p); break;
       case 'w': this.switchSlot(p, m.s | 0); break;
       case 'b': this.buy(p, String(m.item || '')); break;
+      case 'rf': this.refund(p, String(m.item || '')); break;
       case 'g': this.onThrow(p, m); break;
       case 'u':
         p.using = !!m.on;
@@ -819,6 +820,7 @@ export class Room {
 
   buy(p, id) {
     if (!this.canBuy(p)) return false;
+    p.purchases ||= [];
     const pay = cost => {
       if (p.money < cost) return false;
       p.money -= cost;
@@ -830,11 +832,25 @@ export class Room {
       if (!w.price || (w.team && w.team !== p.team)) return false;
       const cur = p.inv[w.slot];
       if (cur && cur.id === id) return false;
+      // si el arma actual se compró esta ronda y no se ha usado, se devuelve en lugar de tirarla
+      const curEntry = cur && p.purchases.find(e => e.item === cur && this.weaponUnused(cur));
+      const credit = curEntry ? curEntry.price : 0;
+      if (p.money + credit < w.price) return false;
+      let prevDrop = null;
+      if (curEntry) {
+        p.money += credit;
+        p.purchases.splice(p.purchases.indexOf(curEntry), 1);
+        prevDrop = curEntry.prevDrop;
+      } else if (cur) {
+        this.spawnDrop(p, cur, true);
+        prevDrop = this.drops[this.drops.length - 1].id;
+      }
       if (!pay(w.price)) return false;
-      if (cur) this.spawnDrop(p, cur, true);
-      p.inv[w.slot] = { id, mag: w.mag, res: w.res };
+      const item = { id, mag: w.mag, res: w.res };
+      p.inv[w.slot] = item;
       p.slot = w.slot;
       p.reloadUntil = 0;
+      p.purchases.push({ id, kind: 'w', price: w.price, item, slot: w.slot, prevDrop });
       return true;
     }
     const n = NADES[id];
@@ -844,17 +860,21 @@ export class Room {
       if (p.nades[id] >= n.max || total >= MAX_NADES) return false;
       if (!pay(n.price)) return false;
       p.nades[id]++;
+      p.purchases.push({ id, kind: 'n', price: n.price });
       return true;
     }
     if (id === 'vest') {
       if (p.armor >= 100) return false;
       if (!pay(EQUIPMENT.vest.price)) return false;
+      p.purchases.push({ id, kind: 'a', price: EQUIPMENT.vest.price, prevArmor: p.armor, prevHelmet: p.helmet });
       p.armor = 100;
       return true;
     }
     if (id === 'vesthelm') {
       if (p.armor >= 100 && p.helmet) return false;
-      if (!pay(p.armor >= 100 ? 350 : EQUIPMENT.vesthelm.price)) return false;
+      const cost = p.armor >= 100 ? 350 : EQUIPMENT.vesthelm.price;
+      if (!pay(cost)) return false;
+      p.purchases.push({ id, kind: 'a', price: cost, prevArmor: p.armor, prevHelmet: p.helmet });
       p.armor = 100; p.helmet = true;
       return true;
     }
@@ -862,6 +882,58 @@ export class Room {
       if (p.team !== 'CT' || p.defuser) return false;
       if (!pay(EQUIPMENT.defuser.price)) return false;
       p.defuser = true;
+      p.purchases.push({ id, kind: 'd', price: EQUIPMENT.defuser.price });
+      return true;
+    }
+    return false;
+  }
+
+  weaponUnused(item) {
+    const w = WEAPONS[item.id];
+    return w && item.mag === w.mag && item.res === w.res;
+  }
+
+  // ¿Se puede reembolsar esta compra? (sin usar y todavía en el inventario)
+  refundable(p, e) {
+    if (e.kind === 'w') return p.inv[e.slot] === e.item && this.weaponUnused(e.item);
+    if (e.kind === 'n') return p.nades[e.id] > 0;
+    if (e.kind === 'a') {
+      // sin daño recibido y que sea la última compra de blindaje
+      const lastArmor = p.purchases.filter(x => x.kind === 'a').pop();
+      return lastArmor === e && p.armor >= 100 && (e.id !== 'vesthelm' || p.helmet);
+    }
+    if (e.kind === 'd') return p.defuser;
+    return false;
+  }
+
+  refundList(p) {
+    if (!p.purchases?.length || !this.canBuy(p)) return [];
+    return [...new Set(p.purchases.filter(e => this.refundable(p, e)).map(e => e.id))];
+  }
+
+  refund(p, id) {
+    if (!this.canBuy(p) || !p.purchases) return false;
+    for (let i = p.purchases.length - 1; i >= 0; i--) {
+      const e = p.purchases[i];
+      if (e.id !== id || !this.refundable(p, e)) continue;
+      if (e.kind === 'w') {
+        p.inv[e.slot] = null;
+        // devolver el arma que tenía antes si sigue en el suelo
+        const di = this.drops.findIndex(d => d.id === e.prevDrop);
+        if (di >= 0) { p.inv[e.slot] = this.drops[di].item; this.drops.splice(di, 1); }
+        p.reloadUntil = 0;
+        if (!p.inv[p.slot]) p.slot = this.bestSlot(p);
+      } else if (e.kind === 'n') {
+        p.nades[id]--;
+        if (p.slot === 4 && !NADE_ORDER.some(k => p.nades[k] > 0)) p.slot = this.bestSlot(p);
+      } else if (e.kind === 'a') {
+        p.armor = e.prevArmor; p.helmet = e.prevHelmet;
+      } else if (e.kind === 'd') {
+        p.defuser = false;
+      }
+      p.money = Math.min(ECONOMY.max, p.money + e.price);
+      p.purchases.splice(i, 1);
+      this.send(p, { t: 'refunded', item: id, price: e.price });
       return true;
     }
     return false;
@@ -1226,6 +1298,7 @@ export class Room {
         if (!p.alive) this.resetInventory(p);
         p.bomb = false;
         p.roundKills = 0;
+        p.purchases = [];
         this.spawn(p, i);
       });
     }
@@ -1535,6 +1608,7 @@ export class Room {
         rl: p.reloadUntil ? r2(Math.max(0, p.reloadUntil - t)) : 0,
         act: p.action ? p.action.type : 0, pr: r2(this.actionProgress(p, t)), cb: this.canBuy(p) ? 1 : 0,
         bt: r2(Math.max(0, this.buyEnd - t)),
+        rf: this.refundList(p),
       };
       p.session.send(common + ',"p":[' + list + '],"me":' + JSON.stringify(me) + '}');
     }
