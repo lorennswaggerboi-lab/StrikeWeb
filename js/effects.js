@@ -47,6 +47,38 @@ export class Effects {
     this.decalMat = new THREE.MeshBasicMaterial({ map: softTex('rgba(20,15,10,0.95)', 'rgba(20,15,10,0)'), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4 });
     this.decals = [];
     this.tracerMat = new THREE.LineBasicMaterial({ color: '#ffe7a0', transparent: true, opacity: 0.8 });
+    // Conjunto fijo de luces reutilizables: crear luces nuevas obliga a recompilar shaders (tirones).
+    this.lights = [];
+    for (let i = 0; i < 6; i++) {
+      const l = new THREE.PointLight('#ffffff', 0, 10, 2);
+      l.userData.until = 0;
+      scene.add(l);
+      this.lights.push(l);
+    }
+  }
+
+  // Usa una luz del conjunto durante `life` segundos; fn(k) devuelve la intensidad (k = 0..1).
+  flashLight(pos, color, distance, life, fn) {
+    const t = performance.now();
+    let l = this.lights.find(x => x.userData.until < t);
+    if (!l) l = this.lights.reduce((a, b) => (a.userData.until < b.userData.until ? a : b));
+    l.color.set(color);
+    l.distance = distance;
+    l.position.copy(pos);
+    l.userData.start = t;
+    l.userData.until = t + life * 1000;
+    l.userData.fn = fn;
+    l.intensity = fn(0);
+    return l;
+  }
+
+  updateLights() {
+    const t = performance.now();
+    for (const l of this.lights) {
+      if (t >= l.userData.until) { l.intensity = 0; continue; }
+      const k = (t - l.userData.start) / (l.userData.until - l.userData.start);
+      l.intensity = l.userData.fn(k);
+    }
   }
 
   sprite(tex, pos, size, color = '#fff', additive = true, opacity = 1) {
@@ -94,9 +126,7 @@ export class Effects {
       new THREE.MeshBasicMaterial({ color: '#000', transparent: true, opacity: 0.45, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
     scorch.position.y = 0.02;
     group.add(scorch);
-    const light = new THREE.PointLight('#ff8a30', 18, radius * 4, 2);
-    light.position.y = 1;
-    group.add(light);
+    this.flashLight(pos.clone().add(new THREE.Vector3(0, 1, 0)), '#ff8a30', radius * 4, duration, k => 18 * Math.min(1, k * duration / 0.3) * Math.min(1, (1 - k) * duration / 1.2) * (0.8 + Math.random() * 0.4));
     this.scene.add(group);
     return this.add(group, duration, (o, k, dt, age) => {
       const fade = Math.min(1, age / 0.3) * Math.min(1, (duration - age) / 1.2);
@@ -107,7 +137,6 @@ export class Effects {
         f.sp.material.opacity = fade;
       }
       for (const s of smoke) { s.position.y += dt * 0.8; if (s.position.y > 5) s.position.y = 1.5; s.material.opacity = 0.35 * fade; }
-      light.intensity = 18 * fade * (0.8 + Math.random() * 0.4);
     });
   }
 
@@ -155,18 +184,12 @@ export class Effects {
     const s = this.sprite(this.tex.fire, pos, 0.35 * big);
     s.material.rotation = Math.random() * 6;
     this.add(s, 0.05, (o, k) => { o.material.opacity = 1 - k; });
-    const light = new THREE.PointLight('#ffb35a', 6 * big, 7, 2);
-    light.position.copy(pos);
-    this.scene.add(light);
-    this.add(light, 0.05, (o, k) => { o.intensity = 6 * big * (1 - k); });
+    this.flashLight(pos, '#ffb35a', 7, 0.05, k => 6 * big * (1 - k));
   }
 
   explosion(pos, big) {
     const scale = big ? 3 : 1;
-    const light = new THREE.PointLight('#ffa040', 60 * scale, 25 * scale, 2);
-    light.position.copy(pos).add(new THREE.Vector3(0, 1, 0));
-    this.scene.add(light);
-    this.add(light, 0.5, (o, k) => { o.intensity = 60 * scale * (1 - k); });
+    this.flashLight(pos.clone().add(new THREE.Vector3(0, 1, 0)), '#ffa040', 25 * scale, 0.5, k => 60 * scale * (1 - k));
     const fb = this.sprite(this.tex.fire, pos.clone().add(new THREE.Vector3(0, 0.8, 0)), 2 * scale);
     this.add(fb, 0.5, (o, k) => { o.scale.setScalar((2 + k * 5) * scale); o.material.opacity = 1 - k; });
     for (let i = 0; i < 18 * scale; i++) {
@@ -183,10 +206,7 @@ export class Effects {
   flashPop(pos) {
     const s = this.sprite(this.tex.glow, pos, 6, '#fff');
     this.add(s, 0.25, (o, k) => { o.material.opacity = 1 - k; o.scale.setScalar(6 + k * 6); });
-    const light = new THREE.PointLight('#ffffff', 80, 30, 2);
-    light.position.copy(pos);
-    this.scene.add(light);
-    this.add(light, 0.25, (o, k) => { o.intensity = 80 * (1 - k); });
+    this.flashLight(pos, '#ffffff', 30, 0.25, k => 80 * (1 - k));
   }
 
   smoke(pos, duration = 18) {
@@ -217,6 +237,7 @@ export class Effects {
   }
 
   update(dt) {
+    this.updateLights();
     for (let i = this.items.length - 1; i >= 0; i--) {
       const it = this.items[i];
       it.age += dt;

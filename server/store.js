@@ -9,6 +9,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const DEFAULT_STATS = { kills: 0, deaths: 0, assists: 0, hs: 0, dmg: 0, rounds: 0, wins: 0, losses: 0, matches: 0, mvps: 0, rating: 1000 };
 
+export const emptySocial = () => ({ friends: [], incoming: [], outgoing: [] });
+
 export function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   const hash = crypto.scryptSync(password, salt, 64).toString('hex');
   return { salt, hash };
@@ -36,11 +38,15 @@ class JsonStore {
       });
     }, 500);
   }
-  async getUser(name) { return this.users[name.toLowerCase()] || null; }
+  async getUser(name) {
+    const u = this.users[name.toLowerCase()];
+    if (u && !u.social) u.social = emptySocial();
+    return u || null;
+  }
   async createUser(u) {
     const key = u.name.toLowerCase();
     if (this.users[key]) return false;
-    this.users[key] = { ...u, stats: { ...DEFAULT_STATS }, avatar: null, created: Date.now() };
+    this.users[key] = { ...u, stats: { ...DEFAULT_STATS }, avatar: null, social: emptySocial(), created: Date.now() };
     this.save();
     return true;
   }
@@ -62,8 +68,9 @@ class PgStore {
     await this.pool.query(`CREATE TABLE IF NOT EXISTS users (
       name_lower TEXT PRIMARY KEY, name TEXT NOT NULL, salt TEXT NOT NULL, hash TEXT NOT NULL,
       avatar TEXT, stats JSONB NOT NULL DEFAULT '{}', created BIGINT NOT NULL)`);
+    await this.pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS social JSONB NOT NULL DEFAULT '{}'`);
   }
-  row(r) { return r ? { name: r.name, salt: r.salt, hash: r.hash, avatar: r.avatar, stats: { ...DEFAULT_STATS, ...r.stats }, created: +r.created } : null; }
+  row(r) { return r ? { name: r.name, salt: r.salt, hash: r.hash, avatar: r.avatar, stats: { ...DEFAULT_STATS, ...r.stats }, social: { ...emptySocial(), ...r.social }, created: +r.created } : null; }
   async getUser(name) {
     const { rows } = await this.pool.query('SELECT * FROM users WHERE name_lower = $1', [name.toLowerCase()]);
     return this.row(rows[0]);
@@ -77,6 +84,7 @@ class PgStore {
   async updateUser(name, fields) {
     if ('avatar' in fields) await this.pool.query('UPDATE users SET avatar = $2 WHERE name_lower = $1', [name.toLowerCase(), fields.avatar]);
     if ('stats' in fields) await this.pool.query('UPDATE users SET stats = $2 WHERE name_lower = $1', [name.toLowerCase(), fields.stats]);
+    if ('social' in fields) await this.pool.query('UPDATE users SET social = $2 WHERE name_lower = $1', [name.toLowerCase(), fields.social]);
   }
   get kind() { return 'PostgreSQL'; }
 }

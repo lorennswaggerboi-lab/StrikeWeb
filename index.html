@@ -163,6 +163,7 @@
       <div class="logo sm">STRIKE<span>WEB</span></div>
       <nav>
         <button class="nav sel" data-tab="play">JUGAR</button>
+        <button class="nav" data-tab="friends">AMIGOS <span id="friendBadge" class="badge hidden"></span></button>
         <button class="nav" data-tab="profile">PERFIL</button>
         <button class="nav" data-tab="settings">AJUSTES</button>
       </nav>
@@ -200,6 +201,16 @@
       </div>
     </main>
 
+    <main class="tabbody hidden" id="tab-friends">
+      <section class="friendsp panel">
+        <h3>AÑADIR AMIGO</h3>
+        <div class="joinrow"><input id="friendName" placeholder="Nombre de usuario" maxlength="16"><button class="btn" id="friendAddBtn">Enviar solicitud</button></div>
+        <div id="friendReqs"></div>
+        <h3 style="margin-top:16px">AMIGOS <span id="friendCount" class="small"></span></h3>
+        <div id="friendList"><div class="small">Todavía no tienes amigos. Añade a alguien por su nombre de usuario.</div></div>
+      </section>
+    </main>
+
     <main class="tabbody hidden" id="tab-profile">
       <section class="profile panel">
         <div class="pfhead">
@@ -230,6 +241,7 @@
     <footer class="lfoot">Contacto / administrador: <a href="mailto:elalfredonico@gmail.com">elalfredonico@gmail.com</a> · <span id="onlineInfo"></span></footer>
   </div>
 
+  <div id="notifs"></div>
   <div id="toast"></div>
   <div id="loading" class="hidden"><div class="spin"></div><div id="loadingtext">Conectando…</div></div>
 

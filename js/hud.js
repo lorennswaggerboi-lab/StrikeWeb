@@ -437,7 +437,12 @@ export class Hud {
   update(dt) {
     const g = this.game, me = g.priv;
     this.tickOverlays(dt);
-    this.drawRadar();
+    // el radar y los avatares no necesitan refrescarse a 144 Hz
+    this.slowT = (this.slowT || 0) + dt;
+    const slow = this.slowT > 0.1;
+    if (slow) this.slowT = 0;
+    this.radarT = (this.radarT || 0) + dt;
+    if (this.radarT > 1 / 30) { this.radarT = 0; this.drawRadar(); }
     if (g.settings.showFps) this.set('netinfo', `${g.fps | 0} FPS · ${g.rtt | 0} ms`); else this.set('netinfo', '');
 
     this.set('scoreCT', String(g.score.CT));
@@ -454,7 +459,7 @@ export class Hud {
     }
 
     // avatares superiores (vivo en color, muerto en gris)
-    for (const team of ['CT', 'T']) {
+    for (const team of slow ? ['CT', 'T'] : []) {
       const list = (g.roster || []).filter(p => p.tm === team).sort((a, b) => a.id - b.id);
       const html = list.map(p => {
         const r = g.remotes.get(p.id);
@@ -543,6 +548,7 @@ const GAME_SETTINGS = [
   ['vmfov', 'FOV del arma', 'range', 54, 75, 1],
   ['volume', 'Volumen', 'range', 0, 1, 0.01],
   ['quality', 'Calidad (requiere recargar)', 'select', ['baja', 'media', 'alta']],
+  ['renderScale', 'Escala de resolución', 'range', 0.5, 1, 0.05],
   ['showFps', 'Mostrar FPS y ping', 'check'],
   ['bob', 'Balanceo del arma', 'check'],
 ];

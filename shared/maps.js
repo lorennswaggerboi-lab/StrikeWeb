@@ -1,15 +1,21 @@
 // Mapas definidos sobre una cuadrícula (cada celda = 2 m). Se parte de un bloque macizo
-// y se "excavan" rectángulos: así los mapas son cerrados, con pasillos, túneles y salas.
+// y se "excavan" rectángulos: así los mapas son cerrados, con pasillos, túneles, varios
+// niveles, puertas y bordes bajos desde los que se ve el exterior.
 //
 // Caracteres de celda:
-//   #  muro        %  muro alternativo (otro material)
-//   .  suelo       A/B  sitio de bomba   T/X  spawn T / CT
-//   =  suelo con techo (túnel, pórtico)
-//   1  escalón 0.5 m     2  plataforma 1 m
-//   c  caja 1 m   C  caja 2 m   K  contenedor 2.6 m   w  murete 1.3 m   b  barril 1.2 m
+//   #  edificio/muro       %  muro alternativo        ' ' exterior (no transitable)
+//   .  suelo   A/B sitio de bomba   T/X spawn T / CT
+//   =  suelo bajo techo (el techo es una losa a 3,5-4 m que se puede pisar desde arriba)
+//   1-8  plataforma/escalón de altura n × 0,5 m (escaleras = celdas consecutivas 1,2,3…)
+//   l  muro bajo de borde (1,4 m) con valla invisible: se ve el exterior
+//   v  ventana (muro con hueco entre 1,1 y 2,5 m)
+//   P  puerta doble abierta estilo Dust 2 (pasable, con dintel)
+//   D  puerta corredera estilo Nuke (se abre/cierra con E)
+//   c  caja 1 m   C  caja 2 m   K  contenedor 2,6 m   w  murete 1,3 m   b  barril 1,2 m
 // x = (columna - ancho/2) * CELL, z = (fila - alto/2) * CELL. Las filas pequeñas (z−) son el lado CT.
 
 export const CELL = 2;
+const ROOF_Y = 3.5, ROOF_TOP = 4.0, LINTEL_Y = 3.2, DOOR_H = 3.2;
 
 const SOLID = {
   '#': { h: null, mat: 'wall' },
@@ -19,11 +25,11 @@ const SOLID = {
   'K': { h: 2.6, mat: 'container' },
   'w': { h: 1.3, mat: 'lowwall' },
   'b': { h: 1.2, mat: 'barrel' },
-  '1': { h: 0.5, mat: 'step' },
-  '2': { h: 1.0, mat: 'step' },
+  'l': { h: 1.4, mat: 'lowwall' },
 };
-const WALK_H = { '.': 0, 'A': 0, 'B': 0, 'T': 0, 'X': 0, '=': 0, '1': 0.5, '2': 1.0 };
-const CEILING_Y = 3.4;
+for (let d = 1; d <= 8; d++) SOLID[String(d)] = { h: d * 0.5, mat: d <= 2 ? 'step' : 'platform' };
+const WALK_H = { '.': 0, 'A': 0, 'B': 0, 'T': 0, 'X': 0, '=': 0, 'P': 0, 'D': 0 };
+for (let d = 1; d <= 8; d++) WALK_H[String(d)] = d * 0.5;
 
 const DEFS = {
   de_dunas: {
@@ -61,6 +67,22 @@ const DEFS = {
       [44, 45, 46, 46, 'c'], [10, 10, 52, 53, 'b'],
     ],
     routes: { A: [[53, 30], [39, 25]], B: [[8, 36], [22, 12]] },
+    extra: [
+      // A corto: pasarela elevada a 2 m con escaleras desde medio y hacia el sitio
+      [33, 33, 24, 27, '1'], [34, 34, 24, 27, '2'], [35, 35, 24, 27, '3'], [36, 36, 24, 27, '4'],
+      [37, 42, 16, 16, '1'], [37, 42, 17, 17, '2'], [37, 42, 18, 18, '3'], [37, 42, 19, 27, '4'],
+      // plataformas en los sitios
+      [53, 56, 3, 5, '3'], [53, 56, 6, 6, '2'], [53, 56, 7, 7, '1'],
+      [3, 5, 3, 4, '3'], [3, 5, 5, 5, '2'], [3, 5, 6, 6, '1'],
+      // puertas dobles de medio (con ventana a un lado), de A largo y de la entrada a túneles
+      [29, 30, 22, 22, 'P'], [27, 28, 22, 22, 'v'],
+      [53, 54, 36, 36, 'P'],
+      [6, 7, 21, 21, '#'], [10, 11, 21, 21, '#'], [8, 9, 21, 21, 'P'],
+      // puerta corredera entre CT y B, con ventana
+      [19, 19, 6, 7, 'D'], [19, 19, 4, 5, 'v'],
+    ],
+    views: [[57, 59, 2, 49], [18, 41, 57, 59], [0, 2, 2, 16], [2, 19, 0, 2], [22, 37, 0, 1]],
+
   },
 
   de_almacen: {
@@ -88,6 +110,17 @@ const DEFS = {
     ],
     roofs: [[31, 35, 3, 7], [3, 7, 3, 7], [16, 27, 2, 3]],
     routes: { A: [[35, 24], [27, 11]], B: [[7, 26], [15, 19]] },
+    extra: [
+      // entreplantas metálicas en los sitios
+      [39, 40, 8, 13, '4'], [39, 40, 7, 7, '3'], [39, 40, 6, 6, '2'], [39, 40, 5, 5, '1'],
+      [3, 4, 8, 13, '4'], [3, 4, 7, 7, '3'], [3, 4, 6, 6, '2'], [3, 4, 5, 5, '1'],
+      // puertas correderas industriales
+      [15, 15, 18, 20, 'D'], [29, 29, 3, 5, 'D'],
+      // portón de la entrada a B
+      [5, 6, 35, 35, '#'], [9, 10, 35, 35, '#'], [7, 8, 35, 35, 'P'],
+    ],
+    views: [[14, 29, 42, 43], [41, 43, 2, 14], [0, 2, 2, 14], [3, 16, 40, 43]],
+
   },
 
   de_pueblo: {
@@ -117,6 +150,16 @@ const DEFS = {
       [42, 43, 5, 6, 'c'], [10, 10, 25, 25, 'w'],
     ],
     routes: { A: [[33, 42], [36, 25]], B: [[5, 25], [17, 18]] },
+    extra: [
+      // balcón en A y terraza en la plaza
+      [50, 52, 22, 23, '4'], [50, 52, 24, 24, '3'], [50, 52, 25, 25, '2'], [50, 52, 26, 26, '1'],
+      [22, 24, 22, 23, '2'], [22, 24, 24, 24, '1'],
+      // arco con puertas hacia A y puerta corredera hacia B
+      [38, 38, 28, 28, '#'], [38, 38, 31, 31, '#'], [38, 38, 29, 30, 'P'],
+      [16, 16, 18, 18, '#'], [19, 19, 18, 18, '#'], [17, 18, 18, 18, 'D'],
+    ],
+    views: [[0, 3, 3, 43], [38, 53, 0, 2], [53, 55, 21, 33], [3, 16, 53, 55]],
+
   },
 
   de_puerto: {
@@ -144,6 +187,15 @@ const DEFS = {
       [16, 17, 28, 28, 'c'], [42, 43, 34, 34, 'c'], [30, 30, 41, 41, 'b'], [25, 25, 5, 5, 'b'],
     ],
     routes: { A: [[51, 43], [42, 30]], B: [[7, 43], [17, 31]] },
+    extra: [
+      // pasarelas elevadas a 2,5 m a ambos lados del patio de contenedores
+      [6, 7, 24, 36, '5'], [6, 7, 23, 23, '4'], [6, 7, 22, 22, '3'], [6, 7, 37, 37, '4'], [6, 7, 38, 38, '3'], [6, 7, 39, 39, '2'], [6, 7, 40, 40, '1'],
+      [52, 53, 24, 36, '5'], [52, 53, 23, 23, '4'], [52, 53, 22, 22, '3'], [52, 53, 37, 37, '4'], [52, 53, 38, 38, '3'], [52, 53, 39, 39, '2'], [52, 53, 40, 40, '1'],
+      // puertas correderas de los almacenes CT
+      [20, 20, 4, 7, 'D'], [39, 39, 4, 7, 'D'],
+    ],
+    views: [[0, 5, 4, 47], [54, 59, 4, 47], [22, 37, 53, 55]],
+
   },
 
   de_templo: {
@@ -168,61 +220,135 @@ const DEFS = {
       [22, 23, 46, 47, 'C'], [25, 25, 45, 45, 'c'], [21, 22, 12, 13, 'w'],
     ],
     routes: { A: [[43, 30], [37, 27]], B: [[7, 30], [14, 27]] },
+    extra: [
+      // altares elevados a 2 m en los sitios
+      [8, 12, 10, 11, '4'], [8, 12, 12, 12, '3'], [8, 12, 13, 13, '2'], [8, 12, 14, 14, '1'],
+      [40, 44, 10, 11, '4'], [40, 44, 12, 12, '3'], [40, 44, 13, 13, '2'], [40, 44, 14, 14, '1'],
+      // puertas dobles hacia CT y puertas correderas de piedra a las galerías
+      [20, 20, 19, 19, '#'], [23, 23, 19, 19, '#'], [21, 22, 19, 19, 'P'],
+      [37, 37, 26, 28, 'D'], [14, 14, 26, 28, 'D'],
+    ],
+    views: [[0, 3, 8, 43], [48, 51, 8, 43], [18, 33, 50, 51], [18, 33, 0, 2]],
+
   },
 };
 
 export const MAP_IDS = Object.keys(DEFS);
 
+function mergeRects(w, h, test) {
+  const used = new Array(w * h).fill(false);
+  const out = [];
+  for (let z = 0; z < h; z++) {
+    for (let x = 0; x < w; x++) {
+      const key = test(x, z);
+      if (key === null || used[z * w + x]) continue;
+      let x2 = x;
+      while (x2 + 1 < w && !used[z * w + x2 + 1] && test(x2 + 1, z) === key) x2++;
+      let z2 = z;
+      outer: while (z2 + 1 < h) {
+        for (let xx = x; xx <= x2; xx++) if (used[(z2 + 1) * w + xx] || test(xx, z2 + 1) !== key) break outer;
+        z2++;
+      }
+      for (let zz = z; zz <= z2; zz++) for (let xx = x; xx <= x2; xx++) used[zz * w + xx] = true;
+      out.push({ x, z, x2, z2, key });
+    }
+  }
+  return out;
+}
+
 function buildMap(id, def) {
   const { w, h } = def;
   const rows = [];
   for (let z = 0; z < h; z++) rows.push(new Array(w).fill('#'));
-  for (const [x0, x1, z0, z1, ch] of def.ops) {
+  for (const [x0, x1, z0, z1, ch] of [...def.ops, ...(def.extra || [])]) {
     for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) rows[z][x] = ch;
+  }
+  const walkable = ch => WALK_H[ch] !== undefined;
+  // bordes abiertos: el muro pegado a zona jugable se vuelve muro bajo; el resto, exterior
+  for (const [x0, x1, z0, z1] of def.views || []) {
+    const mark = [];
+    for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) {
+      if (rows[z][x] !== '#' && rows[z][x] !== '%') continue;
+      let near = false;
+      for (let dz = -1; dz <= 1 && !near; dz++) for (let dx = -1; dx <= 1; dx++) {
+        const r = rows[z + dz];
+        if (r && r[x + dx] !== undefined && (walkable(r[x + dx]) || 'cCKwb'.includes(r[x + dx]))) { near = true; break; }
+      }
+      mark.push([x, z, near ? 'l' : ' ']);
+    }
+    for (const [x, z, ch] of mark) rows[z][x] = ch;
   }
   // los muros cercanos al lado CT usan el material alternativo
   for (let z = 0; z < h; z++) for (let x = 0; x < w; x++) if (rows[z][x] === '#' && z < h * 0.3) rows[z][x] = '%';
   const grid = rows.map(r => r.join(''));
   const toX = cx => (cx - w / 2) * CELL;
   const toZ = cz => (cz - h / 2) * CELL;
+  const at = (x, z) => (x < 0 || z < 0 || x >= w || z >= h ? '#' : grid[z][x]);
 
-  // fusión voraz de celdas iguales en cajas
-  const boxes = [];
-  const used = rows.map(r => r.map(() => false));
-  for (let z = 0; z < h; z++) {
-    for (let x = 0; x < w; x++) {
-      const ch = grid[z][x];
-      const s = SOLID[ch];
-      if (!s || used[z][x]) continue;
-      let x2 = x;
-      while (x2 + 1 < w && grid[z][x2 + 1] === ch && !used[z][x2 + 1]) x2++;
-      let z2 = z;
-      outer: while (z2 + 1 < h) {
-        for (let xx = x; xx <= x2; xx++) if (grid[z2 + 1][xx] !== ch || used[z2 + 1][xx]) break outer;
-        z2++;
-      }
-      for (let zz = z; zz <= z2; zz++) for (let xx = x; xx <= x2; xx++) used[zz][xx] = true;
-      const height = s.h ?? def.wallH;
-      boxes.push({ min: [toX(x), 0, toZ(z)], max: [toX(x2 + 1), height, toZ(z2 + 1)], mat: s.mat, seed: (x * 31 + z * 17) % 97 });
-    }
+  const boxes = [], clips = [];
+  const push = (r, y0, y1, mat, extra = {}) => boxes.push({ min: [toX(r.x), y0, toZ(r.z)], max: [toX(r.x2 + 1), y1, toZ(r.z2 + 1)], mat, seed: (r.x * 31 + r.z * 17) % 97, ...extra });
+  for (const r of mergeRects(w, h, (x, z) => (SOLID[at(x, z)] ? at(x, z) : null))) {
+    const s = SOLID[r.key];
+    let top = s.h ?? def.wallH;
+    // edificios de alturas variadas para que el horizonte no sea plano
+    if (s.h === null) top = def.wallH + ((r.x * 7 + r.z * 13) % 4) * 0.9;
+    push(r, 0, top, s.mat, { kind: r.key });
+    if (r.key === 'l') clips.push({ min: [toX(r.x), 0, toZ(r.z)], max: [toX(r.x2 + 1), 14, toZ(r.z2 + 1)], mat: 'clip' });
   }
-  // techos de túneles y pórticos
-  const roofCells = rows.map(r => r.map(ch => ch === '='));
-  for (const [x0, x1, z0, z1] of def.roofs || []) for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) roofCells[z][x] = true;
-  const usedR = rows.map(r => r.map(() => false));
-  for (let z = 0; z < h; z++) {
-    for (let x = 0; x < w; x++) {
-      if (!roofCells[z][x] || usedR[z][x]) continue;
-      let x2 = x;
-      while (x2 + 1 < w && roofCells[z][x2 + 1] && !usedR[z][x2 + 1]) x2++;
-      let z2 = z;
-      outer2: while (z2 + 1 < h) {
-        for (let xx = x; xx <= x2; xx++) if (!roofCells[z2 + 1][xx] || usedR[z2 + 1][xx]) break outer2;
-        z2++;
-      }
-      for (let zz = z; zz <= z2; zz++) for (let xx = x; xx <= x2; xx++) usedR[zz][xx] = true;
-      boxes.push({ min: [toX(x), CEILING_Y, toZ(z)], max: [toX(x2 + 1), def.wallH, toZ(z2 + 1)], mat: 'ceiling', seed: 0 });
+  // ventanas: antepecho + dintel
+  for (const r of mergeRects(w, h, (x, z) => (at(x, z) === 'v' ? 'v' : null))) {
+    push(r, 0, 1.1, 'wall', { kind: 'sill' });
+    push(r, 2.5, def.wallH, 'wall', { kind: 'lintel' });
+  }
+  // techos (losas pisables) y dinteles de puertas
+  const roofCells = (x, z) => at(x, z) === '=' || (def.roofs || []).some(([x0, x1, z0, z1]) => x >= x0 && x <= x1 && z >= z0 && z <= z1);
+  for (const r of mergeRects(w, h, (x, z) => (roofCells(x, z) && walkable(at(x, z)) ? 'r' : null))) push(r, ROOF_Y, ROOF_TOP, 'ceiling');
+  for (const r of mergeRects(w, h, (x, z) => (at(x, z) === 'P' || at(x, z) === 'D' ? 'd' : null))) push(r, LINTEL_Y, def.wallH, 'wall', { kind: 'lintel' });
+
+  // puertas correderas: grupos de celdas 'D'
+  const doors = [];
+  for (const r of mergeRects(w, h, (x, z) => (at(x, z) === 'D' ? 'D' : null))) {
+    const alongX = r.x2 - r.x >= r.z2 - r.z ? (!walkable(at(r.x - 1, r.z)) || !walkable(at(r.x2 + 1, r.z))) : false;
+    const x0 = toX(r.x), x1 = toX(r.x2 + 1), z0 = toZ(r.z), z1 = toZ(r.z2 + 1);
+    let min, max, axis, len, dir;
+    if (alongX) {
+      const cz = (z0 + z1) / 2;
+      min = [x0, 0, cz - 0.12]; max = [x1, DOOR_H, cz + 0.12]; axis = 0; len = x1 - x0;
+      dir = SOLID[at(r.x2 + 1, r.z)] ? 1 : -1;
+    } else {
+      const cx = (x0 + x1) / 2;
+      min = [cx - 0.12, 0, z0]; max = [cx + 0.12, DOOR_H, z1]; axis = 2; len = z1 - z0;
+      dir = SOLID[at(r.x, r.z2 + 1)] ? 1 : -1;
     }
+    doors.push({ id: doors.length, min, max, axis, len, dir });
+  }
+  // puertas dobles abiertas (decorativas): bisagras a cada lado del hueco
+  // Las hojas quedan abiertas pegadas a la pared del lado hacia el que abren (no estorban el paso).
+  const swingDoors = [];
+  for (const r of mergeRects(w, h, (x, z) => (at(x, z) === 'P' ? 'P' : null))) {
+    const alongX = r.x2 - r.x >= r.z2 - r.z && !walkable(at(r.x - 1, r.z));
+    const x0 = toX(r.x), x1 = toX(r.x2 + 1), z0 = toZ(r.z), z1 = toZ(r.z2 + 1);
+    const T = 0.12;
+    let panels;
+    if (alongX) {
+      const side = walkable(at(r.x, r.z2 + 1)) ? 1 : -1;
+      const line = side > 0 ? z1 : z0;
+      const len = Math.min(2, (x1 - x0) / 2);
+      panels = [
+        { min: [x0 - len, 0.02, Math.min(line, line + side * T)], max: [x0, DOOR_H - 0.1, Math.max(line, line + side * T)], hinge: [x0, line], dir: [-1, 0], side },
+        { min: [x1, 0.02, Math.min(line, line + side * T)], max: [x1 + len, DOOR_H - 0.1, Math.max(line, line + side * T)], hinge: [x1, line], dir: [1, 0], side },
+      ];
+    } else {
+      const side = walkable(at(r.x2 + 1, r.z)) ? 1 : -1;
+      const line = side > 0 ? x1 : x0;
+      const len = Math.min(2, (z1 - z0) / 2);
+      panels = [
+        { min: [Math.min(line, line + side * T), 0.02, z0 - len], max: [Math.max(line, line + side * T), DOOR_H - 0.1, z0], hinge: [line, z0], dir: [0, -1], side },
+        { min: [Math.min(line, line + side * T), 0.02, z1], max: [Math.max(line, line + side * T), DOOR_H - 0.1, z1 + len], hinge: [line, z1], dir: [0, 1], side },
+      ];
+    }
+    for (const pnl of panels) boxes.push({ min: pnl.min, max: pnl.max, mat: 'woodpanel', kind: 'swing', seed: 0 });
+    swingDoors.push({ x0, x1, z0, z1, alongX, h: DOOR_H, panels });
   }
 
   const sites = {};
@@ -263,7 +389,7 @@ function buildMap(id, def) {
 
   return {
     id, title: def.title, theme: def.theme, desc: def.desc, w, h, cell: CELL, wallH: def.wallH,
-    grid, boxes, sites, spawns, spawnCenter, routes,
+    grid, boxes, clips, doors, swingDoors, sites, spawns, spawnCenter, routes, outside: def.outside || 'all',
     half: { x: (w / 2) * CELL, z: (h / 2) * CELL },
     toX, toZ,
     cellOf(x, z) { return [Math.floor(x / CELL + w / 2), Math.floor(z / CELL + h / 2)]; },
@@ -278,6 +404,14 @@ function buildMap(id, def) {
       return v === undefined ? null : v;
     },
   };
+}
+
+// Caja de colisión actual de una puerta corredera según su apertura (0 cerrada, 1 abierta).
+export function doorBox(d, open) {
+  const off = d.len * 0.92 * open * d.dir;
+  const min = [...d.min], max = [...d.max];
+  min[d.axis] += off; max[d.axis] += off;
+  return { min, max, mat: 'door', door: d.id };
 }
 
 const CACHE = {};

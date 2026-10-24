@@ -29,8 +29,19 @@ Administrador / contacto: **elalfredonico@gmail.com**
 - Economía completa: bonus por derrotas consecutivas (de $1400 a $3400), recompensas por baja según el arma, bonus por plantar, y los T que sobreviven al tiempo no cobran.
 - Bomba: plantar 3,2 s, explosión a los 40 s, desactivar 10 s (5 s con kit).
 
-### 5 mapas cerrados
-Dunas, Almacén, Pueblo, Puerto y Templo. Tienen pasillos estrechos, túneles techados, puertas, escalones y plataformas, y cada uno tiene su propio estilo visual. Se comprueba automáticamente que no hay líneas de visión directas entre los spawns.
+### 5 mapas con ambientación
+Dunas, Almacén, Pueblo, Puerto y Templo:
+- **Bordes con muros bajos** desde los que se ve el exterior: dunas con palmeras y casas con cúpulas, fábricas con chimeneas humeantes, pueblo con tejados de teja y campanario, mar con barcos y grúas, y selva con ruinas.
+- **Varios niveles**: escaleras, pasarelas elevadas con barandilla (por ejemplo A corto en Dunas), altares y entreplantas. Los techos de los túneles se pueden pisar.
+- **Puertas dobles abiertas estilo Dust 2** (A largo, medio, túneles…) y **puertas correderas estilo Nuke** que se abren y cierran con **E**. Los bots también las usan.
+- Ventanas por las que se puede disparar y ver, y zonas techadas.
+- Fachadas con detalles: ventanas con contraventanas, puertas, faroles, toldos, tuberías, aires acondicionados y enredaderas. Los edificios tienen alturas variadas y los tejados llevan depósitos, antenas y cúpulas.
+- Se comprueba automáticamente que no hay líneas de visión directas entre los spawns.
+
+### Amigos
+- Añade amigos por nombre de usuario y acepta o rechaza solicitudes.
+- Ve su estado en tiempo real: desconectado, en el lobby o en partida.
+- **Invítalos a tu grupo** con un clic; les llega una notificación para unirse.
 
 ### Armas y combate
 - **21 armas**: Glock, USP-S, P250, Tec-9, Five-SeveN, Desert Eagle, MAC-10, MP9, UMP-45, MP7, P90, Nova, Galil, FAMAS, AK-47, M4A4, SG 553, AUG, SSG 08, AWP y cuchillo (ataque fuerte y puñalada por la espalda).
@@ -43,10 +54,17 @@ Dunas, Almacén, Pueblo, Puerto y Templo. Tienen pasillos estrechos, túneles te
 ### Interfaz estilo CS2
 Barra superior con avatares, radar giratorio, vida y blindaje, munición, inventario con iconos, menú de compra con iconos, marcador con ADR, HS%, MVP, puntos, rating e historial de rondas, informe de daño al morir, banner de ronda con MVP y modo espectador.
 
+### Rendimiento
+- Geometría fusionada por material (menos de 80 llamadas de dibujo por mapa).
+- Conjunto fijo de luces reutilizables, para que no haya tirones al disparar.
+- Sombras que se actualizan cada pocos fotogramas.
+- Escala de resolución y tres niveles de calidad. La calidad baja quita sombras, fachadas detalladas y escenario exterior.
+
 ### Mira configurable
 **Dinámica** (se abre al moverte y disparar) **o estática**. Se puede ajustar longitud, grosor, separación, punto central, contorno, opacidad y color, con vista previa.
 
 ### Bots
+- Nivel ajustado para que no maten al instante: necesitan verte un momento (más si estás lejos o agachado), reaccionan con retraso, apuntan peor al principio y fallan más al rociar. Su habilidad se ajusta con `BOT_SKILL` (0,35 por defecto) o desde la sala privada.
 - Navegan por el mapa con A* y evitan el fuego.
 - Compran según la economía.
 - Los T se agrupan antes de entrar a un sitio y los CT rotan según lo que ve su equipo.
@@ -102,7 +120,7 @@ npm start
 | `ADMIN_EMAIL` | elalfredonico@gmail.com | Contacto mostrado en el juego |
 | `ADMIN_PASSWORD` | (vacío) | Clave para `/rcon <clave>` en el chat |
 | `BOTS_PER_TEAM` | 5 | Tamaño de cada equipo en partidas públicas, completado con bots |
-| `BOT_SKILL` | 0.5 | Habilidad de los bots, de 0 a 1 |
+| `BOT_SKILL` | 0.35 | Habilidad de los bots, de 0 a 1 |
 | `MAX_ROOMS` | 20 | Máximo de partidas simultáneas |
 
 ## Comandos de chat
