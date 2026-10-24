@@ -90,6 +90,7 @@ Barra superior con avatares, radar giratorio, vida y blindaje, munición, invent
    - Start Command: `npm start`
    - O usa **New + → Blueprint** con `render.yaml`.
 2. **Importante, para que las cuentas no se borren:** el disco de Render gratis se borra en cada reinicio. Crea una base de datos PostgreSQL gratis (por ejemplo en [neon.tech](https://neon.tech) o en Render → New → Postgres) y pon su URL en la variable de entorno `DATABASE_URL` del servicio web. Sin ella, las cuentas se guardan en un archivo que se pierde al reiniciar.
+   Con `DATABASE_URL` puesta, las cuentas, amigos, fotos de perfil y sesiones abiertas sobreviven a que Render duerma o reinicie el servidor: los jugadores con "Recordarme" entran solos al volver.
 3. Copia la URL del servicio, por ejemplo `https://strike-web-xxxx.onrender.com`.
 
 ### 2. Cliente en GitHub Pages
@@ -117,6 +118,7 @@ npm start
 |---|---|---|
 | `PORT` | 3000 | Puerto HTTP (Render lo define solo) |
 | `DATABASE_URL` | (vacío) | PostgreSQL para guardar las cuentas de forma permanente |
+| `TOKEN_SECRET` | (se genera y guarda en la base de datos) | Clave para firmar las sesiones; las sesiones siguen válidas tras reinicios |
 | `ADMIN_EMAIL` | elalfredonico@gmail.com | Contacto mostrado en el juego |
 | `ADMIN_PASSWORD` | (vacío) | Clave para `/rcon <clave>` en el chat |
 | `BOTS_PER_TEAM` | 5 | Tamaño de cada equipo en partidas públicas, completado con bots |

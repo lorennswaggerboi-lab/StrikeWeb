@@ -112,6 +112,8 @@ $('authform').addEventListener('submit', async e => {
       ? await api('/api/register', { username, password, password2: $('aPass2').value })
       : await api('/api/login', { username, password });
     store('sw_user', data.user.name);
+    store('sw_remember', $('aRemember').checked ? '1' : null);
+    store('sw_token', $('aRemember').checked ? data.token : null);
     state.token = data.token;
     state.user = data.user;
     $('aPass').value = $('aPass2').value = '';
@@ -144,10 +146,11 @@ function connect() {
     if (state.ws !== ws || state.wantClose) return;
     game?.endMatch();
     closeOverlays();
-    if (state.token && state.retries < 3) {
+    // el servidor puede tardar ~1 min en volver si se durmió o se reinició: reintentar con la misma sesión
+    if (state.token && state.retries < 15) {
       state.retries++;
-      setLoading('Conexión perdida. Reconectando…');
-      setTimeout(connect, 1500 * state.retries);
+      setLoading('Conexión perdida. Reconectando… (si el servidor se reinició puede tardar ~1 min)');
+      setTimeout(connect, Math.min(6000, 1500 * state.retries));
     } else {
       setLoading('');
       showScreen('auth');
@@ -159,6 +162,7 @@ function connect() {
 function logout() {
   state.wantClose = true;
   state.token = null;
+  store('sw_token', null);
   state.ws?.close();
   game?.endMatch();
   closeOverlays();
@@ -182,6 +186,7 @@ function onMessage(m) {
       state.wantClose = true;
       state.ws.close();
       state.token = null;
+      store('sw_token', null);
       showScreen('auth');
       $('aErr').textContent = m.msg;
       return;
@@ -505,4 +510,20 @@ if (matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').ma
 
 showScreen('auth');
 checkServer();
+$('aRemember').checked = read('sw_remember') === '1';
+// inicio de sesión automático con la sesión guardada
+const savedToken = read('sw_token');
+if (savedToken) {
+  state.token = savedToken;
+  setLoading('Iniciando sesión…');
+  api('/api/me', undefined, savedToken)
+    .then(user => { state.user = user; connect(); })
+    .catch(e => {
+      // solo se descarta la sesión si el servidor la rechaza (no si está despertando)
+      if (e.message === 'No autenticado') store('sw_token', null);
+      state.token = null;
+      setLoading('');
+      $('aErr').textContent = e.message === 'No autenticado' ? 'Tu sesión caducó, vuelve a iniciar sesión' : e.message;
+    });
+}
 setInterval(() => { if (!game?.inMatch) checkServer(); }, 30000);

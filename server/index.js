@@ -24,8 +24,21 @@ const CONFIG = {
 
 const store = await createStore();
 const hub = new Hub(CONFIG, store);
-const tokens = new Map(); // token -> { name, exp }
-hub.tokens = { get: t => { const v = tokens.get(t); return v && v.exp > Date.now() ? v : null; } };
+// Sesiones firmadas con HMAC: siguen siendo válidas aunque el servidor se reinicie o se duerma.
+// La clave se guarda en la base de datos (o en TOKEN_SECRET) para que sea siempre la misma.
+const TOKEN_DAYS = 30;
+const tokenSecret = process.env.TOKEN_SECRET || await store.getSecret();
+function verifyToken(token) {
+  const [body, sig] = String(token || '').split('.');
+  if (!body || !sig) return null;
+  const expect = crypto.createHmac('sha256', tokenSecret).update(body).digest('base64url');
+  if (sig.length !== expect.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expect))) return null;
+  try {
+    const data = JSON.parse(Buffer.from(body, 'base64url').toString());
+    return data.exp > Date.now() ? { name: data.n, exp: data.exp } : null;
+  } catch { return null; }
+}
+hub.tokens = { get: verifyToken };
 
 const app = express();
 app.disable('x-powered-by');
@@ -51,18 +64,16 @@ function limited(ip) {
 
 const NAME_RE = /^[A-Za-z0-9_]{3,16}$/;
 function issueToken(name) {
-  const token = crypto.randomBytes(24).toString('hex');
-  tokens.set(token, { name, exp: Date.now() + 7 * 24 * 3600 * 1000 });
-  return token;
+  const body = Buffer.from(JSON.stringify({ n: name, exp: Date.now() + TOKEN_DAYS * 24 * 3600 * 1000 })).toString('base64url');
+  return body + '.' + crypto.createHmac('sha256', tokenSecret).update(body).digest('base64url');
 }
 function authUser(req) {
-  const h = req.headers.authorization || '';
-  const v = tokens.get(h.replace(/^Bearer\s+/i, ''));
-  return v && v.exp > Date.now() ? v.name : null;
+  const v = verifyToken((req.headers.authorization || '').replace(/^Bearer\s+/i, ''));
+  return v ? v.name : null;
 }
 
 app.get('/health', (req, res) => res.send('ok'));
-app.get('/api/info', (req, res) => res.json({ name: 'STRIKE WEB', adminEmail: CONFIG.adminEmail, storage: store.kind, online: hub.sessions.size, rooms: hub.rooms.size }));
+app.get('/api/info', (req, res) => res.json({ name: 'STRIKE WEB', adminEmail: CONFIG.adminEmail, storage: store.kind, persistent: store.persistent, online: hub.sessions.size, rooms: hub.rooms.size }));
 app.get('/api/maps', (req, res) => res.json(mapList()));
 app.get('/api/rooms', (req, res) => res.json([...hub.rooms.values()].filter(r => !r.isPrivate).map(r => r.info())));
 
@@ -138,8 +149,6 @@ setInterval(() => {
     ws.isAlive = false;
     ws.ping();
   }
-  const t = Date.now();
-  for (const [k, v] of tokens) if (v.exp < t) tokens.delete(k);
 }, 20000);
 
 let last = performance.now();

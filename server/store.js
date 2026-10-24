@@ -38,7 +38,12 @@ class JsonStore {
       });
     }, 500);
   }
+  async getSecret() {
+    if (!this.users.__secret) { this.users.__secret = crypto.randomBytes(32).toString('hex'); this.save(); }
+    return this.users.__secret;
+  }
   async getUser(name) {
+    if (name.toLowerCase() === '__secret') return null;
     const u = this.users[name.toLowerCase()];
     if (u && !u.social) u.social = emptySocial();
     return u || null;
@@ -57,6 +62,7 @@ class JsonStore {
     this.save();
   }
   get kind() { return 'archivo JSON (efímero en Render)'; }
+  get persistent() { return false; }
 }
 
 class PgStore {
@@ -69,6 +75,12 @@ class PgStore {
       name_lower TEXT PRIMARY KEY, name TEXT NOT NULL, salt TEXT NOT NULL, hash TEXT NOT NULL,
       avatar TEXT, stats JSONB NOT NULL DEFAULT '{}', created BIGINT NOT NULL)`);
     await this.pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS social JSONB NOT NULL DEFAULT '{}'`);
+    await this.pool.query('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+  }
+  async getSecret() {
+    await this.pool.query('INSERT INTO meta (key, value) VALUES ($1, $2) ON CONFLICT DO NOTHING', ['token_secret', crypto.randomBytes(32).toString('hex')]);
+    const { rows } = await this.pool.query('SELECT value FROM meta WHERE key = $1', ['token_secret']);
+    return rows[0].value;
   }
   row(r) { return r ? { name: r.name, salt: r.salt, hash: r.hash, avatar: r.avatar, stats: { ...DEFAULT_STATS, ...r.stats }, social: { ...emptySocial(), ...r.social }, created: +r.created } : null; }
   async getUser(name) {
@@ -87,12 +99,22 @@ class PgStore {
     if ('social' in fields) await this.pool.query('UPDATE users SET social = $2 WHERE name_lower = $1', [name.toLowerCase(), fields.social]);
   }
   get kind() { return 'PostgreSQL'; }
+  get persistent() { return true; }
 }
 
 export async function createStore() {
-  const store = process.env.DATABASE_URL
-    ? new PgStore(process.env.DATABASE_URL)
-    : new JsonStore(process.env.DATA_FILE || path.join(__dirname, '..', 'data', 'accounts.json'));
+  if (process.env.DATABASE_URL) {
+    const store = new PgStore(process.env.DATABASE_URL.trim());
+    for (let i = 1; ; i++) {
+      try { await store.init(); return store; } catch (e) {
+        console.error(`[cuentas] no se pudo conectar a PostgreSQL (intento ${i}): ${e.message}`);
+        if (i >= 5) throw e;
+        await new Promise(r => setTimeout(r, 2000 * i));
+      }
+    }
+  }
+  console.warn('[cuentas] ATENCIÓN: sin DATABASE_URL las cuentas se guardan en un archivo que Render borra al reiniciar.');
+  const store = new JsonStore(process.env.DATA_FILE || path.join(__dirname, '..', 'data', 'accounts.json'));
   await store.init();
   return store;
 }
