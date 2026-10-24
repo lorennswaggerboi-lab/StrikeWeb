@@ -16,7 +16,7 @@ services:
       - key: BOTS_PER_TEAM
         value: "5"
       - key: BOT_SKILL
-        value: "0.5"
+        value: "0.35"
       # Para que las cuentas no se borren al reiniciar, pega aquí la URL de una base
       # de datos PostgreSQL (por ejemplo, gratis en neon.tech o en Render Postgres).
       - key: DATABASE_URL

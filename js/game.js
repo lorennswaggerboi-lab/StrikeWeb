@@ -1,6 +1,7 @@
 // Núcleo del cliente en partida: render, entrada, predicción de movimiento, armas, red e interpolación.
 import * as THREE from 'three';
-import { getMap } from '../shared/maps.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { getMap, doorBox } from '../shared/maps.js';
 import { WEAPONS, NADES, NADE_ORDER, NADE_SHORT, moveSpeed, recoilKick } from '../shared/weapons.js';
 import {
   moveBody, raycast, rayPlayer, findOverlap, eyeHeight, viewDir, angleWrap,
@@ -26,8 +27,11 @@ export class Game {
     this.settings = settings;
     const q = settings.quality;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: q !== 'baja', powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, q === 'alta' ? 2 : 1));
+    this.applyResolution();
     this.renderer.shadowMap.enabled = q !== 'baja';
+    // las sombras se recalculan cada pocos fotogramas, no en todos
+    this.renderer.shadowMap.autoUpdate = false;
+    this.frameNo = 0;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -37,9 +41,15 @@ export class Game {
     this.camera.rotation.order = 'YXZ';
     this.world = new World(this.scene, q);
 
+    // mapa de entorno para los reflejos metálicos de las armas
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    const envMap = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    this.scene.environment = envMap;
+    this.scene.environmentIntensity = 0.6;
     this.vmScene = new THREE.Scene();
+    this.vmScene.environment = envMap;
     this.vmCam = new THREE.PerspectiveCamera(settings.vmfov || 62, innerWidth / innerHeight, 0.01, 10);
-    this.vmScene.add(new THREE.HemisphereLight('#f0f4ff', '#a08060', 2.6));
+    this.vmScene.add(new THREE.HemisphereLight('#f0f4ff', '#a08060', 1.6));
     const vl = new THREE.DirectionalLight('#fff3e0', 1.6);
     vl.position.set(1, 2, 1);
     this.vmScene.add(vl);
@@ -125,6 +135,8 @@ export class Game {
     this.lastSend = 0;
     this.usingKey = false;
     this.ui = { buy: false, sb: false, chat: false, pause: false, team: false };
+    // quitar cualquier viewmodel anterior de la escena (si no, se quedaban brazos "fantasma")
+    if (this.vmScene) for (const o of [...this.vmScene.children]) if (o.userData?.isViewModel) this.vmScene.remove(o);
     this.vm = null;
     this.vmKey = '';
     this.vmKick = 0;
@@ -154,9 +166,20 @@ export class Game {
   loadMap(id) {
     if (this.map && this.map.id === id) return;
     this.map = getMap(id);
+    this.doorOpen = this.map.doors.map(() => 0);
+    this.rebuildDoors();
     this.world.build(this.map, this.renderer);
+    this.renderer.shadowMap.needsUpdate = true;
     this.hud.setMap(this.map);
     this.clearEntities();
+  }
+
+  // Sólidos (balas) y colisión de movimiento (además, vallas invisibles), con las puertas en su posición actual.
+  rebuildDoors() {
+    const doors = this.map.doors.map((d, i) => doorBox(d, this.doorOpen[i]));
+    this.solid = [...this.map.boxes, ...doors];
+    this.collide = [...this.solid, ...this.map.clips];
+    this.world?.setDoors?.(this.doorOpen);
   }
 
   resize() {
@@ -168,7 +191,14 @@ export class Game {
     this.vmCam.updateProjectionMatrix();
   }
 
+  applyResolution() {
+    const q = this.settings.quality;
+    const cap = q === 'alta' ? 1.5 : q === 'media' ? 1 : 0.85;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, cap) * (this.settings.renderScale || 1));
+  }
+
   applySettings(key) {
+    if (key === 'renderScale') { this.applyResolution(); this.resize(); }
     if (key === 'volume') this.sound.setVolume(this.settings.volume);
     if (key.startsWith('xh')) this.hud.buildCrosshair();
     if (key === 'vmfov') { this.vmCam.fov = this.settings.vmfov; this.vmCam.updateProjectionMatrix(); }
@@ -295,6 +325,7 @@ export class Game {
         if (this.ui.sb) this.hud.renderScoreboard();
         break;
       case 'bought': this.sound.buy(); break;
+      case 'refunded': this.sound.pickup(); this.hud.center(`Reembolsado +$${m.price}`, '', 1000); break;
     }
   }
 
@@ -313,6 +344,7 @@ export class Game {
     this.bomb = m.b;
     this.nadesSnap = m.n;
     this.dropsSnap = m.d;
+    if (m.dr && m.dr.some((o, i) => o !== this.doorOpen[i])) { this.doorOpen = m.dr; this.rebuildDoors(); }
     this.syncSmokes(m.sm || []);
     this.syncFires(m.fi || []);
     const me = m.me;
@@ -420,7 +452,7 @@ export class Game {
       const len = d.length();
       if (len < 34 && (this.alive || !this.spectateTarget())) {
         d.divideScalar(len);
-        if (!raycast([camPos.x, camPos.y, camPos.z], [d.x, d.y, d.z], len, this.map.boxes)) {
+        if (!raycast([camPos.x, camPos.y, camPos.z], [d.x, d.y, d.z], len, this.solid)) {
           const fwd = new THREE.Vector3();
           this.camera.getWorldDirection(fwd);
           const dot = fwd.dot(d);
@@ -448,6 +480,7 @@ export class Game {
       case 'plantstart': this.sound.plantBeeps(pos); break;
       case 'defusestart': this.sound.defuseSound(pos); break;
       case 'reload': this.sound.remoteReload(pos); break;
+      case 'door': this.sound.door(pos, m.o); break;
     }
   }
 
@@ -471,7 +504,7 @@ export class Game {
         const d = end.clone().sub(o);
         const len = d.length();
         d.divideScalar(len);
-        const hit = raycast(m.o, [d.x, d.y, d.z], len + 0.5, this.map.boxes);
+        const hit = raycast(m.o, [d.x, d.y, d.z], len + 0.5, this.solid);
         this.effects.impact(end, hit ? v3(hit.n) : null);
       } else if (e[3] === 1) {
         this.effects.blood(end, end.clone().sub(o).normalize(), false);
@@ -613,6 +646,7 @@ export class Game {
   }
 
   buy(id) { this.send({ t: 'b', item: id }); }
+  refund(id) { this.send({ t: 'rf', item: id }); }
 
   pressUse() {
     if (this.usingKey || !this.alive) return;
@@ -764,7 +798,7 @@ export class Game {
     const item = this.currentItem();
     const me = this.me;
     const eye = [me.x, me.y + me.eye, me.z];
-    const boxes = this.map.boxes;
+    const boxes = this.solid;
     if (item.id === 'nade') {
       if (item.count <= 0) return;
       const d = viewDir(me.yaw, me.pitch + 0.08);
@@ -830,10 +864,7 @@ export class Game {
     }
     if (!w.silenced) {
       this.vmFlashUntil = t + 50;
-      const light = new THREE.PointLight('#ffb35a', 4, 6, 2);
-      light.position.copy(muzzleWorld);
-      this.scene.add(light);
-      this.effects.add(light, 0.05, (o, k) => { o.intensity = 4 * (1 - k); });
+      this.effects.flashLight(muzzleWorld, '#ffb35a', 6, 0.05, k => 4 * (1 - k));
     }
     const [kp, ky] = recoilKick(w, this.spray);
     this.punch.p += kp;
@@ -861,6 +892,8 @@ export class Game {
       this.camera.lookAt(0, 0, 0);
       if (this.camera.fov !== 55) { this.camera.fov = 55; this.camera.updateProjectionMatrix(); }
       this.effects.update(dt);
+      this.world.update(dt);
+      if (++this.frameNo % 10 === 0) this.renderer.shadowMap.needsUpdate = true;
       this.renderer.render(this.scene, this.camera);
       return;
     }
@@ -871,6 +904,7 @@ export class Game {
     this.updateCamera(dt, t);
     this.updateViewmodel(dt, t);
     this.effects.update(dt);
+    this.world.update(dt);
     const item = this.currentItem();
     const w = WEAPONS[item.id];
     const scoped = !!this.scopeFov();
@@ -887,6 +921,7 @@ export class Game {
     }
 
     this.renderer.autoClear = true;
+    if (++this.frameNo % 3 === 0) this.renderer.shadowMap.needsUpdate = true;
     this.renderer.render(this.scene, this.camera);
     if (this.vm && this.vm.visible) {
       this.renderer.autoClear = false;
@@ -900,7 +935,7 @@ export class Game {
     const me = this.me;
     const item = this.currentItem();
     const w = WEAPONS[item.id];
-    const boxes = this.map.boxes;
+    const boxes = this.collide;
     if (this.reloadUntil && t > this.reloadUntil + 400) this.reloadUntil = 0;
     if (t - this.lastShotT > (w?.rate || 0.1) * 1000 + 60) {
       const k = Math.exp(-dt * 7);
@@ -1181,9 +1216,9 @@ export class Game {
     const key = this.alive ? vid + ':' + this.team : '';
     if (key !== this.vmKey) {
       this.vmKey = key;
-      if (this.vm) this.vmScene.remove(this.vm);
+      for (const o of [...this.vmScene.children]) if (o.userData?.isViewModel) this.vmScene.remove(o);
       this.vm = key ? createViewModel(vid, this.team) : null;
-      if (this.vm) { this.vm.scale.setScalar(0.5); this.vmScene.add(this.vm); }
+      if (this.vm) { this.vm.userData.isViewModel = true; this.vm.scale.setScalar(0.5); this.vmScene.add(this.vm); }
     }
     const vm = this.vm;
     if (!vm) return;

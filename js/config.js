@@ -34,7 +34,7 @@ export function httpBase(wsUrl) {
 }
 
 const DEFAULT_SETTINGS = {
-  sens: 1.6, fov: 90, vmfov: 62, volume: 0.6, quality: 'alta', showFps: true, bob: true,
+  sens: 1.6, fov: 90, vmfov: 62, volume: 0.6, quality: 'media', renderScale: 1, showFps: true, bob: true,
   xhDynamic: true, xhColor: '#4dff6a', xhSize: 6, xhThick: 2, xhGap: 3, xhDot: false, xhOutline: true, xhAlpha: 1,
 };
 

@@ -44,6 +44,8 @@ export class BotBrain {
     this.nadeCheckT = 0;
     this.crouchFight = false;
     this.site = 'A';
+    this.spotId = null;
+    this.spotTime = 0;
   }
 
   get map() { return this.room.map; }
@@ -136,7 +138,7 @@ export class BotBrain {
       const d = Math.hypot(dx, dz);
       if (d > 90) continue;
       const cos = (dx * view[0] + dz * view[2]) / (d || 1);
-      if (d > 4 && cos < -0.2) continue;
+      if (d > 4 && cos < 0.25) continue;
       const head = [q.x, q.y + (q.crouch ? 1.1 : 1.55), q.z];
       const chest = [q.x, q.y + (q.crouch ? 0.8 : 1.15), q.z];
       if (!room.los(eye, head) && !room.los(eye, chest)) continue;
@@ -256,8 +258,12 @@ export class BotBrain {
     if (!p.alive) return;
     const frozen = room.phase === 'freeze' || room.phase === 'halftime';
     if (t >= this.nextPerceive) {
-      this.nextPerceive = t + 0.12;
-      this.visible = frozen ? null : this.findTarget();
+      this.nextPerceive = t + 0.2;
+      const seen = frozen ? null : this.findTarget();
+      // hace falta ver al enemigo un momento antes de reaccionar (más si está lejos o agachado)
+      if (seen && seen.id === this.spotId) this.spotTime += 0.2; else { this.spotId = seen ? seen.id : null; this.spotTime = 0; }
+      const need = seen ? 0.15 + Math.hypot(seen.x - this.p.x, seen.z - this.p.z) / 120 + (seen.crouch ? 0.15 : 0) + (seen.walking ? 0.1 : 0) : 0;
+      this.visible = seen && (this.spotTime >= need || this.targetId === seen.id) ? seen : null;
     }
     const flashed = t < p.flashedUntil;
     const target = this.visible && this.visible.alive ? this.visible : null;
@@ -270,9 +276,9 @@ export class BotBrain {
       if (this.targetId !== target.id) {
         this.targetId = target.id;
         this.acquireT = t;
-        this.reactAt = t + rand(0.2, 0.45) * (1.6 - this.skill);
-        this.aimHead = Math.random() < 0.15 + this.skill * 0.45;
-        const err = 0.35 * (1.2 - this.skill);
+        this.reactAt = t + rand(0.3, 0.6) * (1.7 - this.skill);
+        this.aimHead = Math.random() < 0.05 + this.skill * 0.3;
+        const err = 0.4 * (1.3 - this.skill);
         this.aimOffset = [rand(-err, err), rand(-err * 0.6, err * 0.6)];
         this.crouchFight = Math.random() < 0.25;
       }
@@ -283,10 +289,10 @@ export class BotBrain {
       const ty = target.y + (this.aimHead ? (target.crouch ? 1.13 : 1.6) : (target.crouch ? 0.85 : 1.2));
       const dx = target.x - eye[0], dy = ty - eye[1], dz = target.z - eye[2];
       const hd = Math.hypot(dx, dz);
-      const settle = Math.max(0, 1 - (t - this.acquireT) / (1.3 - this.skill * 0.6));
+      const settle = Math.max(0, 1 - (t - this.acquireT) / (1.5 - this.skill * 0.6));
       desiredYaw = Math.atan2(-dx, -dz) + this.aimOffset[0] * settle;
       desiredPitch = Math.atan2(dy, hd) + this.aimOffset[1] * settle;
-      turnRate = 6 + this.skill * 10;
+      turnRate = 4 + this.skill * 6;
       const w = cw?.w;
       if (w && w.cat === 'knife') {
         wishX = dx / (hd || 1); wishZ = dz / (hd || 1);
@@ -338,7 +344,7 @@ export class BotBrain {
 
     if (wantCrouch !== p.crouch) {
       if (wantCrouch) { p.crouch = true; p.h = CROUCH_HEIGHT; }
-      else if (!findOverlap(p.x, p.y, p.z, PLAYER_RADIUS, STAND_HEIGHT, this.map.boxes)) { p.crouch = false; p.h = STAND_HEIGHT; }
+      else if (!findOverlap(p.x, p.y, p.z, PLAYER_RADIUS, STAND_HEIGHT, room.collide)) { p.crouch = false; p.h = STAND_HEIGHT; }
     }
 
     const cw = this.currentWeapon();
@@ -350,9 +356,21 @@ export class BotBrain {
     const k = Math.min(1, dt * (p.onGround ? 10 : 2));
     p.vx += (wishX * speed - p.vx) * k;
     p.vz += (wishZ * speed - p.vz) * k;
-    moveBody(p, dt, this.map.boxes);
+    if ((wishX || wishZ) && speed > 0) this.openDoorsAhead(wishX, wishZ);
+    moveBody(p, dt, room.collide);
     p.walking = walk;
     this.checkStuck(t, speed > 0.5 && (wishX || wishZ));
+  }
+
+  // Abre las puertas correderas cerradas que tiene delante.
+  openDoorsAhead(wx, wz) {
+    const room = this.room, p = this.p;
+    room.map.doors.forEach((d, i) => {
+      if (room.doorTarget[i] > 0.5) return;
+      const cx = (d.min[0] + d.max[0]) / 2, cz = (d.min[2] + d.max[2]) / 2;
+      const dx = cx - p.x, dz = cz - p.z, dist = Math.hypot(dx, dz);
+      if (dist < 2.6 && (dx * wx + dz * wz) / (dist || 1) > 0.3) room.setDoor(i, 1);
+    });
   }
 
   reachVia(t) {
@@ -417,7 +435,7 @@ export class BotBrain {
     if (t < this.nextShotT || t < this.burstPauseUntil) return;
     if (t - p.lastShot < (w.rate || 0.4)) return;
     const dist = Math.hypot(target.x - p.x, target.z - p.z);
-    if (aimErr > 0.06 + 0.4 / Math.max(2, dist)) return;
+    if (aimErr > 0.06 + 0.35 / Math.max(2, dist)) return;
     if (w.cat === 'knife') {
       if (dist > 2.2) return;
       p.lastShot = t;
@@ -428,7 +446,7 @@ export class BotBrain {
     const pellets = w.pellets || 1;
     const speed = Math.hypot(p.vx, p.vz);
     let inacc = (p.scoped && w.scoped ? w.scoped : w.spread) +
-      (speed > 1.5 ? w.move * Math.min(1, speed / 5) : 0) + (1 - this.skill) * 0.022 + this.burst * 0.0035;
+      (speed > 1.5 ? w.move * Math.min(1, speed / 5) : 0) + (1 - this.skill) * 0.022 + 0.004 + this.burst * 0.004;
     if (p.crouch) inacc *= 0.8;
     const rx = Math.cos(p.yaw), rz = -Math.sin(p.yaw);
     const ux = Math.sin(p.yaw) * Math.sin(p.pitch), uy = Math.cos(p.pitch), uz = Math.cos(p.yaw) * Math.sin(p.pitch);
@@ -444,11 +462,11 @@ export class BotBrain {
     room.fireBullets(p, this.eye(), dirs, w, item.id, t);
     if (w.auto) {
       this.burst++;
-      if (this.burst >= (dist > 25 ? rand(2, 4) : rand(4, 9))) { this.burst = 0; this.burstPauseUntil = t + rand(0.2, 0.45); }
+      if (this.burst >= (dist > 25 ? rand(2, 3) : rand(3, 7))) { this.burst = 0; this.burstPauseUntil = t + rand(0.35, 0.7); }
     } else {
-      this.nextShotT = t + w.rate + rand(0.05, 0.25) * (1.3 - this.skill);
+      this.nextShotT = t + w.rate + rand(0.15, 0.45) * (1.4 - this.skill);
     }
-    if (w.cat === 'sniper') this.nextShotT = t + w.rate + rand(0.2, 0.5);
+    if (w.cat === 'sniper') this.nextShotT = t + w.rate + rand(0.5, 1.0);
   }
 
   checkStuck(t, moving) {

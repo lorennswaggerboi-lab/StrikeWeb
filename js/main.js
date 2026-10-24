@@ -193,6 +193,22 @@ function onMessage(m) {
     case 'party': state.party = m; renderParty(); return;
     case 'pchat': partyChat(m.name, m.msg); return;
     case 'perror': toast(m.msg); setLoading(''); return;
+    case 'pinfo': toast(m.msg); return;
+    case 'friends': state.friends = m; renderFriends(); renderParty(); return;
+    case 'friendreq':
+      notify(m.from, m.avatar, `<b>${esc(m.from)}</b> quiere ser tu amigo`, [
+        ['Aceptar', 'primary', () => send({ t: 'friend_accept', name: m.from })],
+        ['Rechazar', '', () => send({ t: 'friend_decline', name: m.from })],
+      ]);
+      game?.sound.ui();
+      return;
+    case 'invite':
+      notify(m.from, m.avatar, `<b>${esc(m.from)}</b> te invita a su grupo`, [
+        ['Unirse', 'primary', () => { if (game?.inMatch) { toast('Sal de la partida para unirte al grupo'); return; } send({ t: 'party_join', code: m.code }); }],
+        ['Ignorar', '', () => {}],
+      ], 30000);
+      game?.sound.ui();
+      return;
     case 'matchfound':
       game?.sound.matchFound();
       setLoading(m.private ? 'Creando la sala privada…' : '¡Partida encontrada! Entrando…');
@@ -225,7 +241,7 @@ function onMessage(m) {
 for (const b of document.querySelectorAll('.nav')) {
   b.addEventListener('click', () => {
     document.querySelectorAll('.nav').forEach(x => x.classList.toggle('sel', x === b));
-    for (const id of ['play', 'profile', 'settings']) $('tab-' + id).classList.toggle('hidden', id !== b.dataset.tab);
+    for (const id of ['play', 'friends', 'profile', 'settings']) $('tab-' + id).classList.toggle('hidden', id !== b.dataset.tab);
     if (b.dataset.tab === 'settings') drawCrosshairPreview($('xhPreview'), settings);
   });
 }
@@ -253,7 +269,7 @@ function renderParty() {
     slots.push(m ? `<div class="pav ${m.name === p.leader ? 'leader' : ''}" title="${esc(m.name)}" style="background-image:url(${avatarOf(m.name, m.avatar)})"></div>` : '<div class="pav empty" data-invite title="Invitar">+</div>');
   }
   $('partybar').innerHTML = slots.join('');
-  for (const b of document.querySelectorAll('[data-invite]')) b.addEventListener('click', copyInvite);
+  for (const b of document.querySelectorAll('[data-invite]')) b.addEventListener('click', () => document.querySelector('.nav[data-tab=friends]').click());
   document.querySelectorAll('.mode').forEach(b => { b.classList.toggle('sel', b.dataset.mode === p.mode); b.disabled = !leader; });
   $('privateOpts').classList.toggle('hidden', p.mode !== 'private');
   $('pBots').value = p.bots; $('pBotsV').textContent = p.bots;
@@ -307,6 +323,56 @@ $('pchatin').addEventListener('keydown', e => {
   if (msg) send({ t: 'pchat', msg });
   $('pchatin').value = '';
 });
+
+// ======================= AMIGOS =======================
+function notify(name, avatar, html, actions, ms = 20000) {
+  const n = document.createElement('div');
+  n.className = 'notif';
+  n.innerHTML = `<div class="av" style="background-image:url(${avatarOf(name, avatar)})"></div><div><div>${html}</div><div class="acts"></div></div>`;
+  for (const [label, cls, fn] of actions) {
+    const b = document.createElement('button');
+    b.className = 'btn ' + cls;
+    b.textContent = label;
+    b.addEventListener('click', () => { fn(); n.remove(); });
+    n.querySelector('.acts').appendChild(b);
+  }
+  $('notifs').appendChild(n);
+  setTimeout(() => n.remove(), ms);
+}
+
+const STATUS = { offline: 'Desconectado', lobby: 'En el lobby', match: 'En partida' };
+function renderFriends() {
+  const f = state.friends;
+  if (!f) return;
+  const inc = f.incoming.length;
+  $('friendBadge').textContent = inc;
+  $('friendBadge').classList.toggle('hidden', !inc);
+  const online = f.friends.filter(x => x.status !== 'offline').length;
+  $('friendCount').textContent = `(${online} conectados de ${f.friends.length})`;
+  let reqs = '';
+  if (f.incoming.length) reqs += '<div class="reqh">SOLICITUDES RECIBIDAS</div>' + f.incoming.map(n => `<div class="fr"><div class="av" style="background-image:url(${avatarOf(n)})"></div><div class="nm">${esc(n)}</div><button class="btn primary" data-fa="accept" data-n="${esc(n)}">Aceptar</button><button class="btn" data-fa="decline" data-n="${esc(n)}">Rechazar</button></div>`).join('');
+  if (f.outgoing.length) reqs += '<div class="reqh">SOLICITUDES ENVIADAS</div>' + f.outgoing.map(n => `<div class="fr"><div class="av" style="background-image:url(${avatarOf(n)})"></div><div class="nm">${esc(n)}<div class="st">Pendiente</div></div><button class="btn" data-fa="cancel" data-n="${esc(n)}">Cancelar</button></div>`).join('');
+  $('friendReqs').innerHTML = reqs;
+  $('friendList').innerHTML = f.friends.length ? f.friends.map(x => `
+    <div class="fr ${x.status}"><div class="av" style="background-image:url(${avatarOf(x.name, x.avatar)})"></div>
+      <div class="nm">${esc(x.name)} ${ratingBadge(x.rating)}<div class="st"><span class="dot ${x.status}"></span>${STATUS[x.status]}${x.party ? ' · en tu grupo' : ''}</div></div>
+      ${x.status !== 'offline' && !x.party ? `<button class="btn primary" data-fa="invite" data-n="${esc(x.name)}">Invitar al grupo</button>` : ''}
+      <button class="btn" data-fa="remove" data-n="${esc(x.name)}" title="Eliminar amigo">✕</button>
+    </div>`).join('') : '<div class="small">Todavía no tienes amigos. Añade a alguien por su nombre de usuario.</div>';
+  for (const b of document.querySelectorAll('[data-fa]')) {
+    b.addEventListener('click', () => {
+      const op = b.dataset.fa, name = b.dataset.n;
+      if (op === 'remove' && !confirm(`¿Eliminar a ${name} de tus amigos?`)) return;
+      send({ t: op === 'invite' ? 'friend_invite' : 'friend_' + op, name });
+    });
+  }
+}
+$('friendAddBtn').addEventListener('click', () => {
+  const n = $('friendName').value.trim();
+  if (n) send({ t: 'friend_add', name: n });
+  $('friendName').value = '';
+});
+$('friendName').addEventListener('keydown', e => { if (e.key === 'Enter') $('friendAddBtn').click(); });
 
 // ======================= PERFIL =======================
 function renderProfile() {

@@ -18,7 +18,7 @@ const CONFIG = {
   adminEmail: process.env.ADMIN_EMAIL || 'elalfredonico@gmail.com',
   adminPassword: process.env.ADMIN_PASSWORD || '',
   botsPerTeam: Math.max(0, Math.min(5, parseInt(process.env.BOTS_PER_TEAM ?? '5', 10) || 0)),
-  botSkill: Math.max(0, Math.min(1, parseFloat(process.env.BOT_SKILL ?? '0.5') || 0.5)),
+  botSkill: Math.max(0, Math.min(1, parseFloat(process.env.BOT_SKILL ?? '0.35') || 0.35)),
   maxRooms: parseInt(process.env.MAX_ROOMS ?? '20', 10),
 };
 

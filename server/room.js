@@ -1,7 +1,7 @@
 // Partida autoritativa: veto de mapas estilo Premier, rondas competitivas (MR12 + prórrogas),
 // economía, disparos con compensación de lag y penetración, granadas, bomba, bots y estadísticas.
 import { performance } from 'perf_hooks';
-import { getMap, MAP_IDS, siteAt, BUY_RADIUS } from '../shared/maps.js';
+import { getMap, MAP_IDS, siteAt, BUY_RADIUS, doorBox } from '../shared/maps.js';
 import { WEAPONS, NADES, NADE_ORDER, MAX_NADES, EQUIPMENT, ECONOMY, damageFalloff } from '../shared/weapons.js';
 import {
   raycast, rayPlayer, rayBoxExit, findOverlap, eyeHeight, viewDir, segmentHitsSphere,
@@ -19,7 +19,7 @@ const T = {
 };
 const BAN_ORDER = ['CT', 'T', 'CT', 'T'];
 const MAX_TEAM_HUMANS = 5;
-const PENETRABLE = new Set(['crate', 'barrel', 'lowwall', 'container']);
+const PENETRABLE = new Set(['crate', 'barrel', 'lowwall', 'container', 'woodpanel', 'door']);
 const MATCH_PHASES = new Set(['freeze', 'live', 'post', 'halftime']);
 
 const BOT_NAMES = [
@@ -73,7 +73,9 @@ export class Room {
   loadMap(id) {
     this.map = getMap(id);
     this.nav = new Nav(this.map);
-    this.boxes = this.map.boxes;
+    this.doorOpen = this.map.doors.map(() => 0);
+    this.doorTarget = this.map.doors.map(() => 0);
+    this.rebuildDoors();
     // al aparecer, mirar hacia la salida del spawn (primer tramo de la ruta hacia el rival)
     this.spawnLook = {};
     for (const team of ['T', 'CT']) {
@@ -82,6 +84,55 @@ export class Room {
       const path = this.nav.findPath(sx, sz, ex, ez);
       this.spawnLook[team] = path.find(pt => Math.hypot(pt[0] - sx, pt[1] - sz) > 8) || [ex, ez];
     }
+  }
+
+  // Sólidos para balas/visión (mapa + puertas) y colisión de movimiento (además, vallas invisibles).
+  rebuildDoors() {
+    const doors = this.map.doors.map((d, i) => doorBox(d, this.doorOpen[i]));
+    this.boxes = [...this.map.boxes, ...doors];
+    this.collide = [...this.boxes, ...this.map.clips];
+  }
+
+  tryDoor(p) {
+    const view = viewDir(p.yaw, 0);
+    let best = -1, bestD = 2.6;
+    this.map.doors.forEach((d, i) => {
+      const b = doorBox(d, this.doorOpen[i]);
+      const cx = (b.min[0] + b.max[0]) / 2, cz = (b.min[2] + b.max[2]) / 2;
+      const dist = Math.hypot(cx - p.x, cz - p.z);
+      if (dist > bestD) return;
+      if (dist > 0.8 && ((cx - p.x) * view[0] + (cz - p.z) * view[2]) / dist < 0.2) return;
+      best = i; bestD = dist;
+    });
+    if (best < 0) return false;
+    this.setDoor(best, this.doorTarget[best] > 0.5 ? 0 : 1);
+    return true;
+  }
+
+  setDoor(i, target) {
+    if (this.doorTarget[i] === target) return;
+    this.doorTarget[i] = target;
+    const d = this.map.doors[i];
+    this.broadcast({ t: 'snd', s: 'door', x: r2((d.min[0] + d.max[0]) / 2), y: 1.5, z: r2((d.min[2] + d.max[2]) / 2), o: target });
+  }
+
+  updateDoors(dt) {
+    let changed = false;
+    this.map.doors.forEach((d, i) => {
+      const cur = this.doorOpen[i], tgt = this.doorTarget[i];
+      if (cur === tgt) return;
+      const next = tgt > cur ? Math.min(tgt, cur + dt / 0.9) : Math.max(tgt, cur - dt / 0.9);
+      if (next < cur) {
+        // no cerrar sobre un jugador: la puerta vuelve a abrirse
+        const b = doorBox(d, next);
+        for (const q of this.players.values()) {
+          if (q.alive && findOverlap(q.x, q.y, q.z, PLAYER_RADIUS, q.crouch ? CROUCH_HEIGHT : STAND_HEIGHT, [b])) { this.doorTarget[i] = 1; return; }
+        }
+      }
+      this.doorOpen[i] = next;
+      changed = true;
+    });
+    if (changed) this.rebuildDoors();
   }
 
   resetRoundState() {
@@ -336,8 +387,12 @@ export class Room {
       case 'r': this.startReload(p); break;
       case 'w': this.switchSlot(p, m.s | 0); break;
       case 'b': this.buy(p, String(m.item || '')); break;
+      case 'rf': this.refund(p, String(m.item || '')); break;
       case 'g': this.onThrow(p, m); break;
-      case 'u': p.using = !!m.on; if (m.on) this.tryPickup(p); break;
+      case 'u':
+        p.using = !!m.on;
+        if (m.on && p.alive && !this.nearObjective(p) && !this.tryDoor(p)) this.tryPickup(p);
+        break;
       case 'd': this.dropCurrent(p); break;
       case 'team': this.changeTeam(p, m.team); break;
       case 'c': this.onChat(p, m); break;
@@ -365,7 +420,7 @@ export class Room {
     const dist = Math.hypot(x - p.x, z - p.z);
     const h = crouch ? CROUCH_HEIGHT : STAND_HEIGHT;
     if (dist > 9.5 * dtv + 1.2 || y < -0.5 || y > 12 ||
-      findOverlap(x, y + 0.08, z, PLAYER_RADIUS - 0.12, h - 0.16, this.boxes)) {
+      findOverlap(x, y + 0.08, z, PLAYER_RADIUS - 0.12, h - 0.16, this.collide)) {
       this.correct(p);
       return;
     }
@@ -703,6 +758,12 @@ export class Room {
     p.slot = this.bestSlot(p);
   }
 
+  // ¿Está en posición de plantar o desactivar? (tiene prioridad sobre puertas y recoger)
+  nearObjective(p) {
+    if (p.team === 'T' && p.bomb && siteAt(this.map, p.x, p.z)) return true;
+    return p.team === 'CT' && this.bomb.state === 'planted' && Math.hypot(p.x - this.bomb.x, p.z - this.bomb.z) < 2;
+  }
+
   tryPickup(p) {
     if (!p.alive) return;
     if (p.team === 'T' && p.bomb && siteAt(this.map, p.x, p.z)) return;
@@ -759,6 +820,7 @@ export class Room {
 
   buy(p, id) {
     if (!this.canBuy(p)) return false;
+    p.purchases ||= [];
     const pay = cost => {
       if (p.money < cost) return false;
       p.money -= cost;
@@ -770,11 +832,25 @@ export class Room {
       if (!w.price || (w.team && w.team !== p.team)) return false;
       const cur = p.inv[w.slot];
       if (cur && cur.id === id) return false;
+      // si el arma actual se compró esta ronda y no se ha usado, se devuelve en lugar de tirarla
+      const curEntry = cur && p.purchases.find(e => e.item === cur && this.weaponUnused(cur));
+      const credit = curEntry ? curEntry.price : 0;
+      if (p.money + credit < w.price) return false;
+      let prevDrop = null;
+      if (curEntry) {
+        p.money += credit;
+        p.purchases.splice(p.purchases.indexOf(curEntry), 1);
+        prevDrop = curEntry.prevDrop;
+      } else if (cur) {
+        this.spawnDrop(p, cur, true);
+        prevDrop = this.drops[this.drops.length - 1].id;
+      }
       if (!pay(w.price)) return false;
-      if (cur) this.spawnDrop(p, cur, true);
-      p.inv[w.slot] = { id, mag: w.mag, res: w.res };
+      const item = { id, mag: w.mag, res: w.res };
+      p.inv[w.slot] = item;
       p.slot = w.slot;
       p.reloadUntil = 0;
+      p.purchases.push({ id, kind: 'w', price: w.price, item, slot: w.slot, prevDrop });
       return true;
     }
     const n = NADES[id];
@@ -784,17 +860,21 @@ export class Room {
       if (p.nades[id] >= n.max || total >= MAX_NADES) return false;
       if (!pay(n.price)) return false;
       p.nades[id]++;
+      p.purchases.push({ id, kind: 'n', price: n.price });
       return true;
     }
     if (id === 'vest') {
       if (p.armor >= 100) return false;
       if (!pay(EQUIPMENT.vest.price)) return false;
+      p.purchases.push({ id, kind: 'a', price: EQUIPMENT.vest.price, prevArmor: p.armor, prevHelmet: p.helmet });
       p.armor = 100;
       return true;
     }
     if (id === 'vesthelm') {
       if (p.armor >= 100 && p.helmet) return false;
-      if (!pay(p.armor >= 100 ? 350 : EQUIPMENT.vesthelm.price)) return false;
+      const cost = p.armor >= 100 ? 350 : EQUIPMENT.vesthelm.price;
+      if (!pay(cost)) return false;
+      p.purchases.push({ id, kind: 'a', price: cost, prevArmor: p.armor, prevHelmet: p.helmet });
       p.armor = 100; p.helmet = true;
       return true;
     }
@@ -802,6 +882,58 @@ export class Room {
       if (p.team !== 'CT' || p.defuser) return false;
       if (!pay(EQUIPMENT.defuser.price)) return false;
       p.defuser = true;
+      p.purchases.push({ id, kind: 'd', price: EQUIPMENT.defuser.price });
+      return true;
+    }
+    return false;
+  }
+
+  weaponUnused(item) {
+    const w = WEAPONS[item.id];
+    return w && item.mag === w.mag && item.res === w.res;
+  }
+
+  // ¿Se puede reembolsar esta compra? (sin usar y todavía en el inventario)
+  refundable(p, e) {
+    if (e.kind === 'w') return p.inv[e.slot] === e.item && this.weaponUnused(e.item);
+    if (e.kind === 'n') return p.nades[e.id] > 0;
+    if (e.kind === 'a') {
+      // sin daño recibido y que sea la última compra de blindaje
+      const lastArmor = p.purchases.filter(x => x.kind === 'a').pop();
+      return lastArmor === e && p.armor >= 100 && (e.id !== 'vesthelm' || p.helmet);
+    }
+    if (e.kind === 'd') return p.defuser;
+    return false;
+  }
+
+  refundList(p) {
+    if (!p.purchases?.length || !this.canBuy(p)) return [];
+    return [...new Set(p.purchases.filter(e => this.refundable(p, e)).map(e => e.id))];
+  }
+
+  refund(p, id) {
+    if (!this.canBuy(p) || !p.purchases) return false;
+    for (let i = p.purchases.length - 1; i >= 0; i--) {
+      const e = p.purchases[i];
+      if (e.id !== id || !this.refundable(p, e)) continue;
+      if (e.kind === 'w') {
+        p.inv[e.slot] = null;
+        // devolver el arma que tenía antes si sigue en el suelo
+        const di = this.drops.findIndex(d => d.id === e.prevDrop);
+        if (di >= 0) { p.inv[e.slot] = this.drops[di].item; this.drops.splice(di, 1); }
+        p.reloadUntil = 0;
+        if (!p.inv[p.slot]) p.slot = this.bestSlot(p);
+      } else if (e.kind === 'n') {
+        p.nades[id]--;
+        if (p.slot === 4 && !NADE_ORDER.some(k => p.nades[k] > 0)) p.slot = this.bestSlot(p);
+      } else if (e.kind === 'a') {
+        p.armor = e.prevArmor; p.helmet = e.prevHelmet;
+      } else if (e.kind === 'd') {
+        p.defuser = false;
+      }
+      p.money = Math.min(ECONOMY.max, p.money + e.price);
+      p.purchases.splice(i, 1);
+      this.send(p, { t: 'refunded', item: id, price: e.price });
       return true;
     }
     return false;
@@ -1153,6 +1285,9 @@ export class Room {
   startRound() {
     const t = now();
     this.round++;
+    this.doorOpen = this.map.doors.map(() => 0);
+    this.doorTarget = this.map.doors.map(() => 0);
+    this.rebuildDoors();
     this.rebalanceBots(true);
     this.resetRoundState();
     this.phase = 'freeze';
@@ -1163,6 +1298,7 @@ export class Room {
         if (!p.alive) this.resetInventory(p);
         p.bomb = false;
         p.roundKills = 0;
+        p.purchases = [];
         this.spawn(p, i);
       });
     }
@@ -1415,6 +1551,7 @@ export class Room {
       }
       this.updateUse(p, t);
     }
+    this.updateDoors(dt);
     this.updateNades(dt, t);
     this.updateFires(dt, t);
     this.autoPickups(t);
@@ -1458,6 +1595,7 @@ export class Room {
       d: this.drops.map(d => [d.id, d.item.id, r2(d.x), r2(d.y), r2(d.z)]),
       sm: this.smokes.map(s => [s.id, r2(s.x), r2(s.y), r2(s.z), r2(s.until - t)]),
       fi: this.fires.map(f => [f.id, r2(f.x), r2(f.y), r2(f.z), f.r, r2(f.until - t)]),
+      dr: this.doorOpen.map(o => Math.round(o * 100) / 100),
     }).slice(0, -1);
     for (const p of this.players.values()) {
       if (!p.session) continue;
@@ -1470,6 +1608,7 @@ export class Room {
         rl: p.reloadUntil ? r2(Math.max(0, p.reloadUntil - t)) : 0,
         act: p.action ? p.action.type : 0, pr: r2(this.actionProgress(p, t)), cb: this.canBuy(p) ? 1 : 0,
         bt: r2(Math.max(0, this.buyEnd - t)),
+        rf: this.refundList(p),
       };
       p.session.send(common + ',"p":[' + list + '],"me":' + JSON.stringify(me) + '}');
     }

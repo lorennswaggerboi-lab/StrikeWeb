@@ -278,6 +278,15 @@ export class Sound {
     this.noise(out, { dur: 0.08, type: 'bandpass', freq: 900, q: 3, gain: 0.35, delay: 0.9 });
   }
 
+  door(pos, opening) {
+    if (!this.ctx) return;
+    const out = this.out(pos, 4);
+    if (!out) return;
+    this.noise(out, { dur: 0.9, type: 'bandpass', freq: opening ? 500 : 420, q: 3, gain: 0.35, attack: 0.05 });
+    this.tone(out, { f0: 180, f1: opening ? 240 : 140, dur: 0.8, type: 'sawtooth', gain: 0.03 });
+    this.noise(out, { dur: 0.15, type: 'lowpass', freq: 300, gain: 0.5, delay: 0.85 });
+  }
+
   armorHit() {
     if (!this.ctx) return;
     this.noise(this.master, { dur: 0.07, type: 'bandpass', freq: 2600, q: 3, gain: 0.25 });

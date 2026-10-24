@@ -321,7 +321,9 @@ export class Hud {
         b.className = 'bitem';
         b.innerHTML = `<img src="${icon(id)}" alt=""><span>${esc(info.name)}</span><span class="pr">$${info.price}</span>`;
         b.dataset.id = id;
-        b.addEventListener('click', () => this.game.buy(id));
+        b.addEventListener('click', () => (b.classList.contains('canrefund') ? this.game.refund(id) : this.game.buy(id)));
+        // clic derecho: reembolsar (como en CS2)
+        b.addEventListener('contextmenu', e => { e.preventDefault(); this.game.refund(id); });
         col.appendChild(b);
         this.buyButtons.push(b);
       }
@@ -348,10 +350,13 @@ export class Hud {
       else if (id === 'vest') owned = me.ar >= 100;
       else if (id === 'vesthelm') owned = me.ar >= 100 && me.hm;
       else if (id === 'defuser') owned = !!me.df;
-      b.disabled = wrongTeam || owned || me.mo < price || !me.cb;
+      const canRefund = (me.rf || []).includes(id);
+      b.disabled = !canRefund && (wrongTeam || owned || me.mo < price || !me.cb);
       b.classList.toggle('owned', owned);
+      b.classList.toggle('canrefund', canRefund && owned);
+      b.title = canRefund ? 'Clic derecho para reembolsar' : '';
       b.classList.toggle('hidden', !!wrongTeam);
-      b.querySelector('.pr').textContent = '$' + price;
+      b.querySelector('.pr').textContent = canRefund && owned ? '↺ Reembolsar' : '$' + price;
     }
   }
 
@@ -437,7 +442,12 @@ export class Hud {
   update(dt) {
     const g = this.game, me = g.priv;
     this.tickOverlays(dt);
-    this.drawRadar();
+    // el radar y los avatares no necesitan refrescarse a 144 Hz
+    this.slowT = (this.slowT || 0) + dt;
+    const slow = this.slowT > 0.1;
+    if (slow) this.slowT = 0;
+    this.radarT = (this.radarT || 0) + dt;
+    if (this.radarT > 1 / 30) { this.radarT = 0; this.drawRadar(); }
     if (g.settings.showFps) this.set('netinfo', `${g.fps | 0} FPS · ${g.rtt | 0} ms`); else this.set('netinfo', '');
 
     this.set('scoreCT', String(g.score.CT));
@@ -454,7 +464,7 @@ export class Hud {
     }
 
     // avatares superiores (vivo en color, muerto en gris)
-    for (const team of ['CT', 'T']) {
+    for (const team of slow ? ['CT', 'T'] : []) {
       const list = (g.roster || []).filter(p => p.tm === team).sort((a, b) => a.id - b.id);
       const html = list.map(p => {
         const r = g.remotes.get(p.id);
@@ -543,6 +553,7 @@ const GAME_SETTINGS = [
   ['vmfov', 'FOV del arma', 'range', 54, 75, 1],
   ['volume', 'Volumen', 'range', 0, 1, 0.01],
   ['quality', 'Calidad (requiere recargar)', 'select', ['baja', 'media', 'alta']],
+  ['renderScale', 'Escala de resolución', 'range', 0.5, 1, 0.05],
   ['showFps', 'Mostrar FPS y ping', 'check'],
   ['bob', 'Balanceo del arma', 'check'],
 ];
