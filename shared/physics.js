@@ -152,3 +152,14 @@ export function angleWrap(a) {
   while (a < -Math.PI) a += Math.PI * 2;
   return a;
 }
+
+// Distancia de salida de un rayo que ya está dentro o atraviesa la caja (para penetración).
+export function rayBoxExit(o, d, b) {
+  let tmax = Infinity;
+  for (let a = 0; a < 3; a++) {
+    if (Math.abs(d[a]) < 1e-9) continue;
+    const t1 = (b.min[a] - o[a]) / d[a], t2 = (b.max[a] - o[a]) / d[a];
+    tmax = Math.min(tmax, Math.max(t1, t2));
+  }
+  return tmax;
+}

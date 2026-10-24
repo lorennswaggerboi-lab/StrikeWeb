@@ -10,9 +10,12 @@
   },
   "author": "elalfredonico@gmail.com",
   "license": "MIT",
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "express": "^4.21.2",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "pg": "^8.13.1"
   }
 }

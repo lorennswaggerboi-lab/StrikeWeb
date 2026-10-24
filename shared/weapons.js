@@ -4,29 +4,39 @@
 export const WEAPONS = {
   knife: { name: 'Cuchillo', slot: 3, cat: 'knife', model: 'knife', dmg: 40, heavy: 65, rate: 0.4, heavyRate: 1.0, range: 2.2, speed: 6.3, ap: 0.85, kill: 1500 },
 
-  glock: { name: 'Glock-18', slot: 2, cat: 'pistol', model: 'pistol', team: 'T', price: 200, dmg: 30, ap: 0.47, rate: 0.15, mag: 20, res: 120, reload: 2.2, speed: 6.0, spread: 0.009, move: 0.03, recoil: 0.018, fall: 0.85, kill: 300 },
-  usp: { name: 'USP-S', slot: 2, cat: 'pistol', model: 'usp', team: 'CT', price: 200, dmg: 35, ap: 0.505, rate: 0.17, mag: 12, res: 24, reload: 2.2, speed: 6.0, spread: 0.005, move: 0.03, recoil: 0.02, fall: 0.86, kill: 300, silenced: true },
-  p250: { name: 'P250', slot: 2, cat: 'pistol', model: 'pistol', price: 300, dmg: 38, ap: 0.64, rate: 0.15, mag: 13, res: 26, reload: 2.2, speed: 6.0, spread: 0.008, move: 0.035, recoil: 0.025, fall: 0.85, kill: 300 },
-  deagle: { name: 'Desert Eagle', slot: 2, cat: 'pistol', model: 'deagle', price: 700, dmg: 63, ap: 0.93, rate: 0.3, mag: 7, res: 35, reload: 2.2, speed: 5.9, spread: 0.006, move: 0.08, recoil: 0.06, fall: 0.88, kill: 300 },
+  glock: { name: 'Glock-18', slot: 2, cat: 'pistol', model: 'pistol', team: 'T', price: 200, dmg: 30, ap: 0.47, rate: 0.15, mag: 20, res: 120, reload: 2.2, speed: 6.0, spread: 0.009, move: 0.03, recoil: 0.018, fall: 0.85, kill: 300, pen: 0.5 },
+  usp: { name: 'USP-S', slot: 2, cat: 'pistol', model: 'usp', team: 'CT', price: 200, dmg: 35, ap: 0.505, rate: 0.17, mag: 12, res: 24, reload: 2.2, speed: 6.0, spread: 0.005, move: 0.03, recoil: 0.02, fall: 0.86, kill: 300, silenced: true, pen: 0.5 },
+  p250: { name: 'P250', slot: 2, cat: 'pistol', model: 'pistol', price: 300, dmg: 38, ap: 0.64, rate: 0.15, mag: 13, res: 26, reload: 2.2, speed: 6.0, spread: 0.008, move: 0.035, recoil: 0.025, fall: 0.85, kill: 300, pen: 0.6 },
+  deagle: { name: 'Desert Eagle', slot: 2, cat: 'pistol', model: 'deagle', price: 700, dmg: 63, ap: 0.93, rate: 0.3, mag: 7, res: 35, reload: 2.2, speed: 5.9, spread: 0.006, move: 0.08, recoil: 0.06, fall: 0.88, kill: 300, pen: 1.2 },
 
-  mac10: { name: 'MAC-10', slot: 1, cat: 'smg', model: 'smg', team: 'T', price: 1050, dmg: 29, ap: 0.575, rate: 0.075, mag: 30, res: 100, reload: 2.6, speed: 6.1, spread: 0.016, move: 0.03, recoil: 0.011, fall: 0.8, kill: 600, auto: true },
-  mp9: { name: 'MP9', slot: 1, cat: 'smg', model: 'smg', team: 'CT', price: 1250, dmg: 26, ap: 0.6, rate: 0.07, mag: 30, res: 120, reload: 2.1, speed: 6.1, spread: 0.014, move: 0.028, recoil: 0.01, fall: 0.82, kill: 600, auto: true },
-  nova: { name: 'Nova', slot: 1, cat: 'heavy', model: 'shotgun', price: 1050, dmg: 26, pellets: 9, ap: 0.5, rate: 0.88, mag: 8, res: 32, reload: 3.0, speed: 5.8, spread: 0.06, move: 0.02, recoil: 0.07, fall: 0.6, kill: 900, range: 45 },
+  mac10: { name: 'MAC-10', slot: 1, cat: 'smg', model: 'smg', team: 'T', price: 1050, dmg: 29, ap: 0.575, rate: 0.075, mag: 30, res: 100, reload: 2.6, speed: 6.1, spread: 0.016, move: 0.03, recoil: 0.011, fall: 0.8, kill: 600, auto: true, pen: 0.5 },
+  mp9: { name: 'MP9', slot: 1, cat: 'smg', model: 'smg', team: 'CT', price: 1250, dmg: 26, ap: 0.6, rate: 0.07, mag: 30, res: 120, reload: 2.1, speed: 6.1, spread: 0.014, move: 0.028, recoil: 0.01, fall: 0.82, kill: 600, auto: true, pen: 0.5 },
+  nova: { name: 'Nova', slot: 1, cat: 'heavy', model: 'shotgun', price: 1050, dmg: 26, pellets: 9, ap: 0.5, rate: 0.88, mag: 8, res: 32, reload: 3.0, speed: 5.8, spread: 0.06, move: 0.02, recoil: 0.07, fall: 0.6, kill: 900, range: 45, pen: 0.3 },
 
-  galil: { name: 'Galil AR', slot: 1, cat: 'rifle', model: 'rifle', team: 'T', price: 1800, dmg: 30, ap: 0.775, rate: 0.09, mag: 35, res: 90, reload: 3.0, speed: 5.5, spread: 0.006, move: 0.08, recoil: 0.016, fall: 0.97, kill: 300, auto: true },
-  famas: { name: 'FAMAS', slot: 1, cat: 'rifle', model: 'rifle2', team: 'CT', price: 2050, dmg: 30, ap: 0.7, rate: 0.09, mag: 25, res: 90, reload: 3.3, speed: 5.5, spread: 0.005, move: 0.08, recoil: 0.015, fall: 0.96, kill: 300, auto: true },
-  ak47: { name: 'AK-47', slot: 1, cat: 'rifle', model: 'ak', team: 'T', price: 2700, dmg: 36, ap: 0.775, rate: 0.1, mag: 30, res: 90, reload: 2.5, speed: 5.4, spread: 0.0035, move: 0.09, recoil: 0.021, fall: 0.98, kill: 300, auto: true },
-  m4a4: { name: 'M4A4', slot: 1, cat: 'rifle', model: 'rifle2', team: 'CT', price: 3100, dmg: 33, ap: 0.7, rate: 0.09, mag: 30, res: 90, reload: 3.1, speed: 5.6, spread: 0.003, move: 0.08, recoil: 0.017, fall: 0.97, kill: 300, auto: true },
-  ssg08: { name: 'SSG 08', slot: 1, cat: 'sniper', model: 'sniper', price: 1700, dmg: 88, ap: 0.85, rate: 1.25, mag: 10, res: 90, reload: 3.7, speed: 6.1, spread: 0.05, scoped: 0.0012, move: 0.07, recoil: 0.05, fall: 0.99, kill: 300, scope: [40, 15] },
-  awp: { name: 'AWP', slot: 1, cat: 'sniper', model: 'awp', price: 4750, dmg: 115, ap: 0.975, rate: 1.47, mag: 5, res: 30, reload: 3.6, speed: 5.0, spread: 0.09, scoped: 0.0008, move: 0.2, recoil: 0.08, fall: 0.99, kill: 100, scope: [40, 12] },
+  tec9: { name: 'Tec-9', slot: 2, cat: 'pistol', model: 'pistol', team: 'T', price: 500, dmg: 33, ap: 0.9, rate: 0.12, mag: 18, res: 90, reload: 2.5, speed: 6.0, spread: 0.011, move: 0.03, recoil: 0.022, fall: 0.8, kill: 300, pen: 0.6 },
+  fiveseven: { name: 'Five-SeveN', slot: 2, cat: 'pistol', model: 'pistol', team: 'CT', price: 500, dmg: 32, ap: 0.91, rate: 0.15, mag: 20, res: 100, reload: 2.2, speed: 6.0, spread: 0.009, move: 0.03, recoil: 0.02, fall: 0.81, kill: 300, pen: 0.6 },
+  ump45: { name: 'UMP-45', slot: 1, cat: 'smg', model: 'smg', price: 1200, dmg: 35, ap: 0.65, rate: 0.09, mag: 25, res: 100, reload: 3.5, speed: 5.9, spread: 0.015, move: 0.03, recoil: 0.013, fall: 0.75, kill: 600, auto: true, pen: 0.6 },
+  mp7: { name: 'MP7', slot: 1, cat: 'smg', model: 'smg', price: 1500, dmg: 29, ap: 0.625, rate: 0.08, mag: 30, res: 120, reload: 3.1, speed: 5.9, spread: 0.013, move: 0.028, recoil: 0.011, fall: 0.85, kill: 600, auto: true, pen: 0.6 },
+  p90: { name: 'P90', slot: 1, cat: 'smg', model: 'p90', price: 2350, dmg: 26, ap: 0.69, rate: 0.07, mag: 50, res: 100, reload: 3.3, speed: 5.8, spread: 0.016, move: 0.03, recoil: 0.009, fall: 0.86, kill: 300, auto: true, pen: 0.7 },
+  galil: { name: 'Galil AR', slot: 1, cat: 'rifle', model: 'rifle', team: 'T', price: 1800, dmg: 30, ap: 0.775, rate: 0.09, mag: 35, res: 90, reload: 3.0, speed: 5.5, spread: 0.006, move: 0.08, recoil: 0.016, fall: 0.97, kill: 300, auto: true, pen: 1.5 },
+  famas: { name: 'FAMAS', slot: 1, cat: 'rifle', model: 'rifle2', team: 'CT', price: 2050, dmg: 30, ap: 0.7, rate: 0.09, mag: 25, res: 90, reload: 3.3, speed: 5.5, spread: 0.005, move: 0.08, recoil: 0.015, fall: 0.96, kill: 300, auto: true, pen: 1.5 },
+  ak47: { name: 'AK-47', slot: 1, cat: 'rifle', model: 'ak', team: 'T', price: 2700, dmg: 36, ap: 0.775, rate: 0.1, mag: 30, res: 90, reload: 2.5, speed: 5.4, spread: 0.0035, move: 0.09, recoil: 0.021, fall: 0.98, kill: 300, auto: true, pen: 1.8 },
+  m4a4: { name: 'M4A4', slot: 1, cat: 'rifle', model: 'rifle2', team: 'CT', price: 3100, dmg: 33, ap: 0.7, rate: 0.09, mag: 30, res: 90, reload: 3.1, speed: 5.6, spread: 0.003, move: 0.08, recoil: 0.017, fall: 0.97, kill: 300, auto: true, pen: 1.6 },
+  sg553: { name: 'SG 553', slot: 1, cat: 'rifle', model: 'rifle', team: 'T', price: 3000, dmg: 30, ap: 1.0, rate: 0.09, mag: 30, res: 90, reload: 2.8, speed: 5.2, spread: 0.004, scoped: 0.0018, move: 0.09, recoil: 0.019, fall: 0.98, kill: 300, auto: true, scope: [45], pen: 2.0 },
+  aug: { name: 'AUG', slot: 1, cat: 'rifle', model: 'rifle2', team: 'CT', price: 3300, dmg: 28, ap: 0.9, rate: 0.09, mag: 30, res: 90, reload: 3.8, speed: 5.5, spread: 0.0035, scoped: 0.0016, move: 0.085, recoil: 0.017, fall: 0.98, kill: 300, auto: true, scope: [45], pen: 2.0 },
+  ssg08: { name: 'SSG 08', slot: 1, cat: 'sniper', model: 'sniper', price: 1700, dmg: 88, ap: 0.85, rate: 1.25, mag: 10, res: 90, reload: 3.7, speed: 6.1, spread: 0.05, scoped: 0.0012, move: 0.07, recoil: 0.05, fall: 0.99, kill: 300, scope: [40, 15], pen: 2.5 },
+  awp: { name: 'AWP', slot: 1, cat: 'sniper', model: 'awp', price: 4750, dmg: 115, ap: 0.975, rate: 1.47, mag: 5, res: 30, reload: 3.6, speed: 5.0, spread: 0.09, scoped: 0.0008, move: 0.2, recoil: 0.08, fall: 0.99, kill: 100, scope: [40, 12], pen: 3.0 },
 };
 
 export const NADES = {
   he: { name: 'Granada HE', price: 300, max: 1, key: 'he' },
   flash: { name: 'Granada cegadora', price: 200, max: 2, key: 'flash' },
   smoke: { name: 'Granada de humo', price: 300, max: 1, key: 'smoke' },
+  molotov: { name: 'Molotov', price: 400, max: 1, key: 'molotov', team: 'T' },
+  incgrenade: { name: 'Incendiaria', price: 500, max: 1, key: 'incgrenade', team: 'CT' },
 };
-export const NADE_ORDER = ['he', 'flash', 'smoke'];
+export const NADE_ORDER = ['he', 'flash', 'smoke', 'molotov', 'incgrenade'];
+export const NADE_SHORT = { he: 'HE', flash: 'Cegadora', smoke: 'Humo', molotov: 'Molotov', incgrenade: 'Incendiaria' };
 export const MAX_NADES = 4;
 
 export const EQUIPMENT = {
@@ -36,11 +46,11 @@ export const EQUIPMENT = {
 };
 
 export const BUY_MENU = [
-  { title: 'Pistolas', items: ['glock', 'usp', 'p250', 'deagle'] },
-  { title: 'Subfusiles / Pesadas', items: ['mac10', 'mp9', 'nova'] },
-  { title: 'Rifles', items: ['galil', 'famas', 'ak47', 'm4a4', 'ssg08', 'awp'] },
+  { title: 'Pistolas', items: ['glock', 'usp', 'p250', 'tec9', 'fiveseven', 'deagle'] },
+  { title: 'Subfusiles', items: ['mac10', 'mp9', 'ump45', 'mp7', 'p90', 'nova'] },
+  { title: 'Rifles', items: ['galil', 'famas', 'ak47', 'm4a4', 'sg553', 'aug', 'ssg08', 'awp'] },
   { title: 'Equipo', items: ['vest', 'vesthelm', 'defuser'] },
-  { title: 'Granadas', items: ['he', 'flash', 'smoke'] },
+  { title: 'Granadas', items: ['he', 'flash', 'smoke', 'molotov', 'incgrenade'] },
 ];
 
 export function itemInfo(id) {
@@ -67,7 +77,7 @@ export function recoilKick(w, n) {
 }
 
 export const ECONOMY = {
-  start: 800, max: 16000, win: 3250, winObjective: 3500,
+  start: 800, overtimeStart: 12500, max: 16000, win: 3250, winObjective: 3500,
   lossBase: 1400, lossStep: 500, lossMax: 3400, plantBonus: 300, plantLossBonus: 800,
   teamKillPenalty: 300,
 };
