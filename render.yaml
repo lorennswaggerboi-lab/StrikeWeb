@@ -1,0 +1,22 @@
+# Blueprint de Render: despliega el servidor multijugador (WebSocket).
+# En Render: New + > Blueprint > selecciona este repositorio.
+services:
+  - type: web
+    name: strike-web
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: ADMIN_EMAIL
+        value: elalfredonico@gmail.com
+      - key: ADMIN_PASSWORD
+        generateValue: true
+      - key: BOTS_PER_TEAM
+        value: "4"
+      - key: BOT_SKILL
+        value: "0.5"
+      - key: MAX_PLAYERS_PER_ROOM
+        value: "10"

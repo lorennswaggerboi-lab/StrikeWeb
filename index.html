@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STRIKE WEB — Shooter táctico multijugador</title>
+  <meta name="description" content="Shooter táctico multijugador en el navegador inspirado en Counter-Strike 2. Plantar y desactivar la bomba, economía, bots y salas online.">
+  <meta name="author" content="elalfredonico@gmail.com">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js" } }
+  </script>
+</head>
+<body>
+  <canvas id="c"></canvas>
+
+  <!-- ===================== HUD ===================== -->
+  <div id="hud" class="hidden">
+    <div id="crosshair"></div>
+    <div id="hitmarker"></div>
+    <div id="scope" class="hidden"><div class="lens"></div><div class="h"></div><div class="v"></div></div>
+    <div id="flash"></div>
+    <div id="dmgflash"></div>
+    <div id="dmgind"></div>
+
+    <div id="radarwrap"><canvas id="radar" width="220" height="220"></canvas><div id="radarloc"></div></div>
+    <div id="moneybox"><span id="money">$800</span><span id="moneydelta"></span></div>
+    <div id="buyhint" class="hidden">[B] Comprar · <span id="buytime"></span></div>
+
+    <div id="topbar">
+      <div class="side ct"><div class="alive" id="ctAlive"></div><div class="score" id="scoreCT">0</div></div>
+      <div class="mid"><div id="timer">1:55</div><div id="roundinfo">Calentamiento</div></div>
+      <div class="side t"><div class="score" id="scoreT">0</div><div class="alive" id="tAlive"></div></div>
+    </div>
+
+    <div id="killfeed"></div>
+    <div id="center"></div>
+    <div id="sub"></div>
+    <div id="progress" class="hidden"><div class="label" id="progresslabel"></div><div class="bar"><div id="progressbar"></div></div></div>
+
+    <div id="bottomleft">
+      <div class="stat"><svg viewBox="0 0 24 24"><path d="M10 3h4v7h7v4h-7v7h-4v-7H3v-4h7z"/></svg><span id="hp">100</span></div>
+      <div class="stat"><svg viewBox="0 0 24 24"><path d="M12 2l8 3v6c0 5-3.4 9.4-8 11-4.6-1.6-8-6-8-11V5z"/></svg><span id="armor">0</span><span id="helmet" class="hidden">⛑</span></div>
+      <div id="kit" class="hidden">✚ KIT</div>
+    </div>
+
+    <div id="bottomright">
+      <div id="slots"></div>
+      <div id="weaponname"></div>
+      <div id="ammo"><span id="mag">0</span><span id="res">/ 0</span></div>
+    </div>
+
+    <div id="bombstatus" class="hidden"></div>
+    <div id="spectate" class="hidden"></div>
+    <div id="chatlog"></div>
+    <div id="chatbox" class="hidden"><span id="chatmode">TODOS:</span><input id="chatinput" maxlength="120" autocomplete="off"></div>
+    <div id="netinfo"></div>
+  </div>
+
+  <!-- ===================== MENÚ DE COMPRA ===================== -->
+  <div id="buymenu" class="overlay hidden">
+    <div class="panel buy">
+      <div class="buyhead"><h2>Menú de compra</h2><div id="buymoney">$0</div><button class="x" data-close="buymenu">✕</button></div>
+      <div id="buycats"></div>
+      <div class="hint">Haz clic para comprar · [B] o [Esc] para cerrar</div>
+    </div>
+  </div>
+
+  <!-- ===================== MARCADOR ===================== -->
+  <div id="scoreboard" class="overlay hidden">
+    <div class="panel sb">
+      <div class="sbhead"><span id="sbround"></span><span id="sbroom"></span></div>
+      <div class="sbteam ct"><div class="sbtitle"><span>ANTITERRORISTAS</span><b id="sbscoreCT">0</b></div><table id="sbCT"></table></div>
+      <div class="sbteam t"><div class="sbtitle"><span>TERRORISTAS</span><b id="sbscoreT">0</b></div><table id="sbT"></table></div>
+      <div class="sbspec" id="sbSpec"></div>
+    </div>
+  </div>
+
+  <!-- ===================== SELECCIÓN DE EQUIPO ===================== -->
+  <div id="teamselect" class="overlay hidden">
+    <div class="panel teams">
+      <h2>Elige equipo</h2>
+      <div class="teamcards">
+        <button class="teamcard ct" data-team="CT"><div class="emb">CT</div><div>Antiterroristas</div><small>Defiende A y B, desactiva la bomba</small></button>
+        <button class="teamcard t" data-team="T"><div class="emb">T</div><div>Terroristas</div><small>Planta la bomba en A o B</small></button>
+      </div>
+      <button class="link" data-team="SPEC">Espectador</button>
+      <button class="x" data-close="teamselect">✕</button>
+    </div>
+  </div>
+
+  <!-- ===================== PAUSA ===================== -->
+  <div id="pause" class="overlay hidden">
+    <div class="panel pausep">
+      <h2>Pausa</h2>
+      <button class="btn primary" id="resume">Volver al juego</button>
+      <button class="btn" id="openTeams">Cambiar de equipo [M]</button>
+      <div class="settings" id="settingsPause"></div>
+      <button class="btn danger" id="leave">Salir al menú</button>
+    </div>
+  </div>
+
+  <!-- ===================== MENÚ PRINCIPAL ===================== -->
+  <div id="menu" class="overlay menu">
+    <div class="menuinner">
+      <div class="brand">
+        <div class="logo">STRIKE<span>WEB</span></div>
+        <div class="tag">Shooter táctico multijugador · inspirado en Counter-Strike 2</div>
+      </div>
+      <div class="menugrid">
+        <div class="panel join">
+          <label>Nombre<input id="name" maxlength="16" placeholder="Tu nombre"></label>
+          <label>Sala<input id="room" maxlength="16" placeholder="publico"></label>
+          <div class="teampick">
+            <button class="tp sel" data-t="auto">Auto</button>
+            <button class="tp ct" data-t="CT">CT</button>
+            <button class="tp t" data-t="T">T</button>
+          </div>
+          <button class="btn primary big" id="play">JUGAR</button>
+          <div id="joinerr"></div>
+          <details class="srv">
+            <summary>Servidor</summary>
+            <label>URL del servidor (Render)<input id="server" placeholder="wss://tu-servicio.onrender.com/ws"></label>
+            <div class="small" id="srvstatus">—</div>
+          </details>
+        </div>
+        <div class="panel roomsp">
+          <div class="roomshead"><h3>Salas activas</h3><button class="link" id="refresh">↻</button></div>
+          <div id="rooms"><div class="small">Cargando…</div></div>
+          <h3>Ajustes</h3>
+          <div class="settings" id="settingsMenu"></div>
+        </div>
+        <div class="panel keys">
+          <h3>Controles</h3>
+          <ul>
+            <li><b>WASD</b> moverse · <b>Shift</b> caminar · <b>Ctrl/C</b> agacharse · <b>Espacio</b> saltar</li>
+            <li><b>Clic izq.</b> disparar · <b>Clic der.</b> mira / ataque fuerte</li>
+            <li><b>1-5</b> / rueda armas · <b>Q</b> arma anterior · <b>R</b> recargar · <b>G</b> soltar</li>
+            <li><b>E</b> plantar / desactivar / recoger · <b>B</b> comprar</li>
+            <li><b>Tab</b> marcador · <b>Y</b> chat · <b>U</b> chat de equipo · <b>M</b> equipo</li>
+          </ul>
+          <h3>Modo de juego</h3>
+          <p class="small">Desactivación de bomba al mejor de 24 rondas (gana quien llegue a 13), cambio de bando en la ronda 12, economía completa y bots que rellenan los equipos.</p>
+        </div>
+      </div>
+      <footer>Contacto / administrador: <a id="adminmail" href="mailto:elalfredonico@gmail.com">elalfredonico@gmail.com</a> · Proyecto de fans, sin relación con Valve.</footer>
+    </div>
+  </div>
+
+  <div id="loading" class="hidden"><div class="spin"></div><div id="loadingtext">Conectando…</div></div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
