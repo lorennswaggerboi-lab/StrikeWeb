@@ -59,7 +59,56 @@ export class Effects {
   }
 
   add(obj, life, update) {
-    this.items.push({ obj, life, age: 0, update });
+    const it = { obj, life, age: 0, update };
+    this.items.push(it);
+    return it;
+  }
+
+  // Termina un efecto de larga duración (humo o fuego) de forma suave.
+  end(it, fade = 1.5) {
+    if (it && it.age < it.life - fade) it.age = it.life - fade;
+  }
+
+  fire(pos, radius = 3.2, duration = 7) {
+    const group = new THREE.Group();
+    group.position.copy(pos);
+    const flames = [];
+    const n = 34;
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * radius;
+      const m = new THREE.SpriteMaterial({ map: this.tex.fire, color: new THREE.Color().setHSL(0.06 + Math.random() * 0.05, 1, 0.55), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+      const sp = new THREE.Sprite(m);
+      sp.position.set(Math.cos(a) * r, 0.3, Math.sin(a) * r);
+      group.add(sp);
+      flames.push({ sp, base: 0.6 + Math.random() * 0.9, ph: Math.random() * 10, y: sp.position.y });
+    }
+    const smoke = [];
+    for (let i = 0; i < 8; i++) {
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.tex.smoke, color: '#333', transparent: true, depthWrite: false, opacity: 0.5 }));
+      s.position.set((Math.random() - 0.5) * radius, 1.5 + Math.random() * 2, (Math.random() - 0.5) * radius);
+      s.scale.setScalar(2.5);
+      group.add(s);
+      smoke.push(s);
+    }
+    const scorch = new THREE.Mesh(new THREE.CircleGeometry(radius * 1.05, 24).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: '#000', transparent: true, opacity: 0.45, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
+    scorch.position.y = 0.02;
+    group.add(scorch);
+    const light = new THREE.PointLight('#ff8a30', 18, radius * 4, 2);
+    light.position.y = 1;
+    group.add(light);
+    this.scene.add(group);
+    return this.add(group, duration, (o, k, dt, age) => {
+      const fade = Math.min(1, age / 0.3) * Math.min(1, (duration - age) / 1.2);
+      for (const f of flames) {
+        const fl = 0.75 + Math.sin(age * 14 + f.ph) * 0.25;
+        f.sp.scale.set(f.base * fl, f.base * 1.6 * fl, 1);
+        f.sp.position.y = f.y + f.base * 0.5;
+        f.sp.material.opacity = fade;
+      }
+      for (const s of smoke) { s.position.y += dt * 0.8; if (s.position.y > 5) s.position.y = 1.5; s.material.opacity = 0.35 * fade; }
+      light.intensity = 18 * fade * (0.8 + Math.random() * 0.4);
+    });
   }
 
   tracer(from, to) {
@@ -155,7 +204,7 @@ export class Effects {
       puffs.push({ s, target, size: 2.6 + Math.random() * 1.8 });
     }
     this.scene.add(group);
-    this.add(group, duration, (o, k, dt, age) => {
+    return this.add(group, duration, (o, k, dt, age) => {
       const grow = Math.min(1, age / 1.4);
       const fade = age > duration - 2.5 ? (duration - age) / 2.5 : 1;
       for (const p of puffs) {

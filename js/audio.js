@@ -246,6 +246,54 @@ export class Sound {
     if (out) for (let i = 0; i < 4; i++) this.noise(out, { dur: 0.05, type: 'bandpass', freq: 2000, q: 4, gain: 0.25, delay: i * 0.25 });
   }
 
+  fire(pos, dur = 7) {
+    if (!this.ctx) return;
+    const out = this.out(pos, 5);
+    if (!out) return;
+    this.noise(out, { dur: 0.6, type: 'lowpass', freq: 900, gain: 0.7 });
+    for (let t = 0.2; t < dur; t += 0.12 + Math.random() * 0.15) {
+      this.noise(out, { dur: 0.05, type: 'bandpass', freq: 1500 + Math.random() * 2500, q: 2, gain: 0.08 + Math.random() * 0.1, delay: t });
+    }
+  }
+
+  fizz(pos) {
+    if (!this.ctx) return;
+    const out = this.out(pos, 4);
+    if (out) this.noise(out, { dur: 0.8, type: 'highpass', freq: 2500, gain: 0.3, sweep: 0.5 });
+  }
+
+  glass(pos) {
+    if (!this.ctx) return;
+    const out = this.out(pos, 4);
+    if (!out) return;
+    this.noise(out, { dur: 0.25, type: 'highpass', freq: 4000, gain: 0.45 });
+    this.tone(out, { f0: 3200, f1: 2600, dur: 0.15, type: 'triangle', gain: 0.1 });
+  }
+
+  remoteReload(pos) {
+    if (!this.ctx) return;
+    const out = this.out(pos, 2);
+    if (!out) return;
+    this.noise(out, { dur: 0.06, type: 'bandpass', freq: 1400, q: 3, gain: 0.3, delay: 0.1 });
+    this.noise(out, { dur: 0.08, type: 'bandpass', freq: 900, q: 3, gain: 0.35, delay: 0.9 });
+  }
+
+  armorHit() {
+    if (!this.ctx) return;
+    this.noise(this.master, { dur: 0.07, type: 'bandpass', freq: 2600, q: 3, gain: 0.25 });
+  }
+
+  inspect() {
+    if (!this.ctx) return;
+    this.noise(this.master, { dur: 0.08, type: 'bandpass', freq: 1700, q: 3, gain: 0.15, delay: 0.2 });
+    this.noise(this.master, { dur: 0.08, type: 'bandpass', freq: 1100, q: 3, gain: 0.15, delay: 1.2 });
+  }
+
+  matchFound() {
+    if (!this.ctx) return;
+    [523, 784, 1046].forEach((f, i) => this.tone(this.master, { f0: f, dur: 0.3, type: 'triangle', gain: 0.15, delay: i * 0.1 }));
+  }
+
   roundEnd(win) {
     if (!this.ctx) return;
     const notes = win ? [523, 659, 784, 1046] : [392, 349, 311, 262];

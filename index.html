@@ -4,14 +4,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>STRIKE WEB — Shooter táctico multijugador</title>
-  <meta name="description" content="Shooter táctico multijugador en el navegador inspirado en Counter-Strike 2. Plantar y desactivar la bomba, economía, bots y salas online.">
+  <meta name="description" content="Shooter táctico multijugador en el navegador inspirado en Counter-Strike 2: lobby con amigos, veto de mapas, partidas competitivas a 13 rondas y bots.">
   <meta name="author" content="elalfredonico@gmail.com">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
   <script type="importmap">
-    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js" } }
+    { "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"
+    } }
   </script>
 </head>
 <body>
@@ -26,55 +29,80 @@
     <div id="dmgflash"></div>
     <div id="dmgind"></div>
 
-    <div id="radarwrap"><canvas id="radar" width="220" height="220"></canvas><div id="radarloc"></div></div>
-    <div id="moneybox"><span id="money">$800</span><span id="moneydelta"></span></div>
-    <div id="buyhint" class="hidden">[B] Comprar · <span id="buytime"></span></div>
+    <div id="radarwrap"><canvas id="radar" width="230" height="230"></canvas><div id="radarloc"></div></div>
+    <div id="moneybox"><span class="cur">$</span><span id="money">800</span><span id="moneydelta"></span></div>
+    <div id="buyhint" class="hidden"><kbd>B</kbd> Comprar <span id="buytime"></span></div>
 
     <div id="topbar">
-      <div class="side ct"><div class="alive" id="ctAlive"></div><div class="score" id="scoreCT">0</div></div>
-      <div class="mid"><div id="timer">1:55</div><div id="roundinfo">Calentamiento</div></div>
-      <div class="side t"><div class="score" id="scoreT">0</div><div class="alive" id="tAlive"></div></div>
+      <div class="avatars ct" id="ctAvatars"></div>
+      <div class="scorebox ct"><span id="scoreCT">0</span></div>
+      <div class="timerbox"><div id="timer">1:55</div><div id="roundinfo">Calentamiento</div></div>
+      <div class="scorebox t"><span id="scoreT">0</span></div>
+      <div class="avatars t" id="tAvatars"></div>
     </div>
+    <div id="banner"></div>
 
     <div id="killfeed"></div>
     <div id="center"></div>
     <div id="sub"></div>
+    <div id="roundend" class="hidden"><div class="title" id="reTitle"></div><div class="mvp" id="reMvp"></div></div>
     <div id="progress" class="hidden"><div class="label" id="progresslabel"></div><div class="bar"><div id="progressbar"></div></div></div>
 
     <div id="bottomleft">
-      <div class="stat"><svg viewBox="0 0 24 24"><path d="M10 3h4v7h7v4h-7v7h-4v-7H3v-4h7z"/></svg><span id="hp">100</span></div>
-      <div class="stat"><svg viewBox="0 0 24 24"><path d="M12 2l8 3v6c0 5-3.4 9.4-8 11-4.6-1.6-8-6-8-11V5z"/></svg><span id="armor">0</span><span id="helmet" class="hidden">⛑</span></div>
-      <div id="kit" class="hidden">✚ KIT</div>
+      <div class="hpbox"><svg viewBox="0 0 24 24"><path d="M9.5 3h5v6.5H21v5h-6.5V21h-5v-6.5H3v-5h6.5z"/></svg><span id="hp">100</span><div class="hpbar"><i id="hpbar"></i></div></div>
+      <div class="arbox"><svg viewBox="0 0 24 24"><path d="M12 2l8 3v6c0 5-3.4 9.4-8 11-4.6-1.6-8-6-8-11V5z"/></svg><span id="armor">0</span><span id="helmet" class="hidden">+H</span></div>
+      <div id="kit" class="hidden">KIT</div>
     </div>
 
     <div id="bottomright">
       <div id="slots"></div>
-      <div id="weaponname"></div>
-      <div id="ammo"><span id="mag">0</span><span id="res">/ 0</span></div>
+      <div id="ammo"><span id="mag">0</span><span class="sep">/</span><span id="res">0</span></div>
     </div>
 
     <div id="bombstatus" class="hidden"></div>
     <div id="spectate" class="hidden"></div>
+    <div id="dmgreport" class="hidden"></div>
     <div id="chatlog"></div>
     <div id="chatbox" class="hidden"><span id="chatmode">TODOS:</span><input id="chatinput" maxlength="120" autocomplete="off"></div>
     <div id="netinfo"></div>
   </div>
 
+  <!-- ===================== VETO DE MAPAS ===================== -->
+  <div id="mapvote" class="overlay hidden">
+    <div class="vote">
+      <div class="votehead"><div class="vt">VETO DE MAPAS</div><div id="voteturn"></div><div id="votetimer"></div></div>
+      <div id="votemaps"></div>
+      <div class="votehint" id="votehint">Cada equipo veta un mapa por turno. El último que queda es el que se juega.</div>
+    </div>
+  </div>
+
+  <!-- ===================== FIN DE PARTIDA ===================== -->
+  <div id="matchend" class="overlay hidden">
+    <div class="panel me">
+      <div id="meTitle"></div>
+      <div id="meScore"></div>
+      <div id="meRating"></div>
+      <div id="meTable"></div>
+      <div class="small" id="meHint">Volviendo al lobby…</div>
+    </div>
+  </div>
+
   <!-- ===================== MENÚ DE COMPRA ===================== -->
   <div id="buymenu" class="overlay hidden">
     <div class="panel buy">
-      <div class="buyhead"><h2>Menú de compra</h2><div id="buymoney">$0</div><button class="x" data-close="buymenu">✕</button></div>
+      <div class="buyhead"><h2>COMPRAR</h2><div id="buymoney">$0</div><div class="small" id="buytimeleft"></div><button class="x" data-close="buymenu">✕</button></div>
       <div id="buycats"></div>
-      <div class="hint">Haz clic para comprar · [B] o [Esc] para cerrar</div>
+      <div class="hint">Clic para comprar · <kbd>B</kbd> o <kbd>Esc</kbd> para cerrar</div>
     </div>
   </div>
 
   <!-- ===================== MARCADOR ===================== -->
   <div id="scoreboard" class="overlay hidden">
     <div class="panel sb">
-      <div class="sbhead"><span id="sbround"></span><span id="sbroom"></span></div>
-      <div class="sbteam ct"><div class="sbtitle"><span>ANTITERRORISTAS</span><b id="sbscoreCT">0</b></div><table id="sbCT"></table></div>
-      <div class="sbteam t"><div class="sbtitle"><span>TERRORISTAS</span><b id="sbscoreT">0</b></div><table id="sbT"></table></div>
+      <div class="sbhead"><span id="sbmap"></span><span id="sbround"></span><span id="sbroom"></span></div>
+      <div id="sbhist"></div>
+      <div class="sbteam ct"><div class="sbtitle"><b id="sbscoreCT">0</b><span>ANTITERRORISTAS</span></div><table id="sbCT"></table></div>
+      <div class="sbteam t"><div class="sbtitle"><b id="sbscoreT">0</b><span>TERRORISTAS</span></div><table id="sbT"></table></div>
       <div class="sbspec" id="sbSpec"></div>
     </div>
   </div>
@@ -82,9 +110,9 @@
   <!-- ===================== SELECCIÓN DE EQUIPO ===================== -->
   <div id="teamselect" class="overlay hidden">
     <div class="panel teams">
-      <h2>Elige equipo</h2>
+      <h2>ELIGE EQUIPO</h2>
       <div class="teamcards">
-        <button class="teamcard ct" data-team="CT"><div class="emb">CT</div><div>Antiterroristas</div><small>Defiende A y B, desactiva la bomba</small></button>
+        <button class="teamcard ct" data-team="CT"><div class="emb">CT</div><div>Antiterroristas</div><small>Defiende A y B y desactiva la bomba</small></button>
         <button class="teamcard t" data-team="T"><div class="emb">T</div><div>Terroristas</div><small>Planta la bomba en A o B</small></button>
       </div>
       <button class="link" data-team="SPEC">Espectador</button>
@@ -95,61 +123,114 @@
   <!-- ===================== PAUSA ===================== -->
   <div id="pause" class="overlay hidden">
     <div class="panel pausep">
-      <h2>Pausa</h2>
+      <h2>MENÚ</h2>
       <button class="btn primary" id="resume">Volver al juego</button>
-      <button class="btn" id="openTeams">Cambiar de equipo [M]</button>
-      <div class="settings" id="settingsPause"></div>
-      <button class="btn danger" id="leave">Salir al menú</button>
+      <button class="btn" id="openTeams">Cambiar de equipo <kbd>M</kbd></button>
+      <div id="hostpanel" class="hidden">
+        <h3>Anfitrión de la sala privada</h3>
+        <div class="row"><span>Bots por equipo</span><input type="range" id="hostBots" min="0" max="5" step="1"><span class="val" id="hostBotsV"></span></div>
+        <div class="row"><span>Dificultad de bots</span><input type="range" id="hostSkill" min="0" max="1" step="0.05"><span class="val" id="hostSkillV"></span></div>
+        <div class="hostbtns"><button class="btn" id="hostStart">Empezar ya</button><button class="btn" id="hostRestart">Reiniciar partida</button></div>
+      </div>
+      <details class="pausesettings"><summary>Ajustes</summary><div class="settings" id="settingsPause"></div></details>
+      <button class="btn danger" id="leave">Abandonar partida</button>
     </div>
   </div>
 
-  <!-- ===================== MENÚ PRINCIPAL ===================== -->
-  <div id="menu" class="overlay menu">
-    <div class="menuinner">
-      <div class="brand">
-        <div class="logo">STRIKE<span>WEB</span></div>
-        <div class="tag">Shooter táctico multijugador · inspirado en Counter-Strike 2</div>
+  <!-- ===================== LOGIN / REGISTRO ===================== -->
+  <div id="auth" class="screen">
+    <div class="authbox panel">
+      <div class="logo">STRIKE<span>WEB</span></div>
+      <div class="tabs"><button class="tab sel" data-auth="login">Iniciar sesión</button><button class="tab" data-auth="register">Registrarse</button></div>
+      <form id="authform" autocomplete="on">
+        <label>Usuario<input id="aUser" name="username" autocomplete="username" maxlength="16" required></label>
+        <label>Contraseña<input id="aPass" name="password" type="password" autocomplete="current-password" maxlength="64" required></label>
+        <label id="aPass2Row" class="hidden">Repite la contraseña<input id="aPass2" type="password" autocomplete="new-password" maxlength="64"></label>
+        <button class="btn primary big" id="aSubmit" type="submit">ENTRAR</button>
+        <div id="aErr"></div>
+      </form>
+      <details class="srv"><summary>Servidor</summary>
+        <label>URL del servidor (Render)<input id="server" placeholder="wss://tu-servicio.onrender.com/ws"></label>
+        <div class="small" id="srvstatus">—</div>
+      </details>
+      <div class="small foot">Contacto: <a href="mailto:elalfredonico@gmail.com">elalfredonico@gmail.com</a> · Proyecto de fans, sin relación con Valve.</div>
+    </div>
+  </div>
+
+  <!-- ===================== LOBBY / MENÚ PRINCIPAL ===================== -->
+  <div id="lobby" class="screen hidden">
+    <header class="topnav">
+      <div class="logo sm">STRIKE<span>WEB</span></div>
+      <nav>
+        <button class="nav sel" data-tab="play">JUGAR</button>
+        <button class="nav" data-tab="profile">PERFIL</button>
+        <button class="nav" data-tab="settings">AJUSTES</button>
+      </nav>
+      <div class="partybar" id="partybar"></div>
+      <button class="iconbtn" id="logout" title="Cerrar sesión">⏻</button>
+    </header>
+
+    <div id="reconnectBar" class="hidden">Tienes una partida en curso. <button class="btn primary" id="reconnectBtn">RECONECTAR</button></div>
+
+    <main class="tabbody" id="tab-play">
+      <section class="modes">
+        <button class="mode sel" data-mode="competitive"><div class="mt">PREMIER</div><div class="md">Competitivo 5v5 · veto de mapas · al mejor de 24 rondas</div></button>
+        <button class="mode" data-mode="private"><div class="mt">PRIVADA</div><div class="md">Solo tu grupo y bots · elige equipo libremente</div></button>
+        <div id="privateOpts" class="hidden">
+          <div class="row"><span>Bots por equipo</span><input type="range" id="pBots" min="0" max="5" step="1"><span class="val" id="pBotsV"></span></div>
+          <div class="row"><span>Dificultad</span><input type="range" id="pSkill" min="0" max="1" step="0.05"><span class="val" id="pSkillV"></span></div>
+        </div>
+        <h3>MAPAS EN EL VETO</h3>
+        <div id="mappool"></div>
+      </section>
+      <section class="partypanel panel">
+        <h3>TU GRUPO <span id="partyCount"></span></h3>
+        <div id="partyMembers"></div>
+        <div class="invite">
+          <div class="small">Invita a tus amigos con este código o enlace:</div>
+          <div class="codebox"><span id="partyCode">——</span><button class="btn" id="copyLink">Copiar enlace</button></div>
+          <div class="joinrow"><input id="joinCode" placeholder="Código de grupo" maxlength="8"><button class="btn" id="joinBtn">Unirse</button></div>
+          <button class="link" id="leaveParty">Salir del grupo</button>
+        </div>
+        <div class="pchat"><div id="pchatlog"></div><input id="pchatin" placeholder="Escribe al grupo…" maxlength="160"></div>
+      </section>
+      <div class="playbar">
+        <div id="playstatus"></div>
+        <button class="btn primary huge" id="playBtn">BUSCAR PARTIDA</button>
       </div>
-      <div class="menugrid">
-        <div class="panel join">
-          <label>Nombre<input id="name" maxlength="16" placeholder="Tu nombre"></label>
-          <label>Sala<input id="room" maxlength="16" placeholder="publico"></label>
-          <div class="teampick">
-            <button class="tp sel" data-t="auto">Auto</button>
-            <button class="tp ct" data-t="CT">CT</button>
-            <button class="tp t" data-t="T">T</button>
+    </main>
+
+    <main class="tabbody hidden" id="tab-profile">
+      <section class="profile panel">
+        <div class="pfhead">
+          <div class="avatarEdit"><img id="pfAvatar" alt="Foto de perfil"><label class="btn">Cambiar foto<input type="file" id="avatarFile" accept="image/*" hidden></label><button class="link" id="avatarRemove">Quitar foto</button></div>
+          <div><div id="pfName"></div><div id="pfRating"></div></div>
+        </div>
+        <div id="pfStats"></div>
+      </section>
+    </main>
+
+    <main class="tabbody hidden" id="tab-settings">
+      <section class="settingsWrap panel">
+        <div class="setcols">
+          <div><h3>JUEGO</h3><div class="settings" id="settingsGame"></div></div>
+          <div><h3>MIRA</h3><div class="xhprev"><canvas id="xhPreview" width="160" height="160"></canvas></div><div class="settings" id="settingsXh"></div></div>
+          <div><h3>CONTROLES</h3>
+            <ul class="keys">
+              <li><kbd>WASD</kbd> moverse · <kbd>Shift</kbd> caminar · <kbd>Ctrl</kbd> agacharse · <kbd>Espacio</kbd> saltar</li>
+              <li><kbd>Clic izq.</kbd> disparar · <kbd>Clic der.</kbd> mira / ataque fuerte / lanzar corto</li>
+              <li><kbd>1-5</kbd> / rueda armas · <kbd>Q</kbd> arma anterior · <kbd>R</kbd> recargar · <kbd>G</kbd> soltar · <kbd>F</kbd> inspeccionar</li>
+              <li><kbd>E</kbd> plantar / desactivar / recoger · <kbd>B</kbd> comprar</li>
+              <li><kbd>Tab</kbd> marcador · <kbd>Y</kbd> chat · <kbd>U</kbd> chat de equipo · <kbd>M</kbd> equipo</li>
+            </ul>
           </div>
-          <button class="btn primary big" id="play">JUGAR</button>
-          <div id="joinerr"></div>
-          <details class="srv">
-            <summary>Servidor</summary>
-            <label>URL del servidor (Render)<input id="server" placeholder="wss://tu-servicio.onrender.com/ws"></label>
-            <div class="small" id="srvstatus">—</div>
-          </details>
         </div>
-        <div class="panel roomsp">
-          <div class="roomshead"><h3>Salas activas</h3><button class="link" id="refresh">↻</button></div>
-          <div id="rooms"><div class="small">Cargando…</div></div>
-          <h3>Ajustes</h3>
-          <div class="settings" id="settingsMenu"></div>
-        </div>
-        <div class="panel keys">
-          <h3>Controles</h3>
-          <ul>
-            <li><b>WASD</b> moverse · <b>Shift</b> caminar · <b>Ctrl/C</b> agacharse · <b>Espacio</b> saltar</li>
-            <li><b>Clic izq.</b> disparar · <b>Clic der.</b> mira / ataque fuerte</li>
-            <li><b>1-5</b> / rueda armas · <b>Q</b> arma anterior · <b>R</b> recargar · <b>G</b> soltar</li>
-            <li><b>E</b> plantar / desactivar / recoger · <b>B</b> comprar</li>
-            <li><b>Tab</b> marcador · <b>Y</b> chat · <b>U</b> chat de equipo · <b>M</b> equipo</li>
-          </ul>
-          <h3>Modo de juego</h3>
-          <p class="small">Desactivación de bomba al mejor de 24 rondas (gana quien llegue a 13), cambio de bando en la ronda 12, economía completa y bots que rellenan los equipos.</p>
-        </div>
-      </div>
-      <footer>Contacto / administrador: <a id="adminmail" href="mailto:elalfredonico@gmail.com">elalfredonico@gmail.com</a> · Proyecto de fans, sin relación con Valve.</footer>
-    </div>
+      </section>
+    </main>
+    <footer class="lfoot">Contacto / administrador: <a href="mailto:elalfredonico@gmail.com">elalfredonico@gmail.com</a> · <span id="onlineInfo"></span></footer>
   </div>
 
+  <div id="toast"></div>
   <div id="loading" class="hidden"><div class="spin"></div><div id="loadingtext">Conectando…</div></div>
 
   <script type="module" src="js/main.js"></script>

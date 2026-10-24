@@ -29,8 +29,11 @@ function addRot(g, m, rx) {
   return m;
 }
 
+const NADE_IDS = ['he', 'flash', 'smoke', 'molotov', 'incgrenade'];
+
 export function weaponModelId(id) {
   if (id === 'nade' || id === 'c4') return id;
+  if (NADE_IDS.includes(id)) return 'nade_' + id;
   return WEAPONS[id]?.model || 'knife';
 }
 
@@ -106,13 +109,39 @@ export function createWeaponModel(id) {
       muzzle.position.set(0, 0.05, -0.86);
       break;
     }
-    case 'nade': {
+    case 'nade': case 'nade_he': {
       const s = new THREE.Mesh(new THREE.SphereGeometry(0.04, 10, 8), mat('#465c37'));
       g.add(s);
       g.add(box(0.02, 0.03, 0.02, metal, 0, 0.045, 0));
+      g.add(box(0.008, 0.06, 0.012, metal, 0.03, 0.02, 0));
       muzzle.position.set(0, 0, -0.05);
       break;
     }
+    case 'nade_flash': case 'nade_smoke': case 'nade_incgrenade': {
+      const color = model === 'nade_flash' ? '#9aa3ab' : model === 'nade_smoke' ? '#6b7f8c' : '#8c3a2a';
+      const c = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.11, 12), mat(color));
+      g.add(c);
+      g.add(box(0.02, 0.025, 0.02, metal, 0, 0.065, 0));
+      g.add(box(0.008, 0.07, 0.012, metal, 0.035, 0.02, 0));
+      muzzle.position.set(0, 0, -0.05);
+      break;
+    }
+    case 'nade_molotov': {
+      const b = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.04, 0.12, 10), mat('#3f6b3a', { transparent: true, opacity: 0.85 }));
+      g.add(b);
+      const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.02, 0.07, 8), mat('#3f6b3a'));
+      neck.position.y = 0.09; g.add(neck);
+      g.add(box(0.03, 0.05, 0.03, '#d8cbb0', 0, 0.14, 0));
+      muzzle.position.set(0, 0.16, 0);
+      break;
+    }
+    case 'p90':
+      g.add(box(0.06, 0.09, 0.42, dark, 0, 0.04, -0.1));
+      g.add(box(0.05, 0.03, 0.3, '#2a2a2a', 0, 0.1, -0.1));
+      g.add(cyl(0.013, 0.08, black, 0, 0.05, -0.35));
+      g.add(box(0.035, 0.07, 0.06, black, 0, -0.04, -0.02));
+      muzzle.position.set(0, 0.05, -0.4);
+      break;
     case 'c4':
       g.add(box(0.16, 0.06, 0.1, '#5d5134', 0, 0, -0.03));
       g.add(box(0.06, 0.03, 0.04, '#111', 0.03, 0.04, -0.03));
@@ -211,7 +240,7 @@ export function createViewModel(id, team) {
   const sleeve = (TEAM_COLORS[team] || TEAM_COLORS.T).shirt;
   const model = weaponModelId(id);
   const glove = team === 'CT' ? '#222' : '#3a3024';
-  const two = !['knife', 'pistol', 'usp', 'deagle', 'nade', 'c4'].includes(model);
+  const two = !['knife', 'pistol', 'usp', 'deagle', 'nade', 'c4'].includes(model) && !model.startsWith('nade');
   const rArm = new THREE.Group();
   rArm.add(box(0.07, 0.07, 0.24, sleeve, 0, -0.04, 0.17));
   rArm.add(box(0.075, 0.08, 0.09, glove, 0, -0.02, 0.02));

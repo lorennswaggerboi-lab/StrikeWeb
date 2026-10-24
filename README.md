@@ -3,22 +3,54 @@
 Shooter táctico multijugador para el navegador inspirado en **Counter-Strike 2**.
 El cliente es una página estática (**GitHub Pages**) y el servidor multijugador corre en **Render** (Node.js + WebSocket).
 
+Juega aquí: **https://lorennswaggerboi-lab.github.io/yea/**
+
 Administrador / contacto: **elalfredonico@gmail.com**
 
 ## Características
 
-- **Modo desactivación de bomba**: plantar (T) y desactivar (CT, 10 s o 5 s con kit), bomba de 40 s.
-- **Partida al mejor de 24 rondas**: gana quien llegue a 13; cambio de bandos en la ronda 12; calentamiento previo.
-- **Economía completa**: $800 iniciales, recompensas por baja según el arma, bonus por derrotas consecutivas, bonus por plantar, máximo $16 000.
-- **13 armas**: Glock-18, USP-S, P250, Desert Eagle, MAC-10, MP9, Nova, Galil AR, FAMAS, AK-47, M4A4, SSG 08 y AWP (con mira telescópica), además del cuchillo con ataque fuerte y puñalada por la espalda.
-- **Granadas**: HE (daño de área), cegadora (ceguera según el ángulo de visión) y humo (bloquea la visión de jugadores y bots).
-- **Equipo**: chaleco, chaleco con casco y kit de desactivación; el blindaje reduce el daño según la penetración de cada arma.
-- **Disparos con autoridad del servidor**: hitboxes de cabeza, pecho, estómago y piernas, pérdida de daño con la distancia, **compensación de lag** (rebobinado de posiciones), patrones de retroceso y dispersión por movimiento, salto y agacharse.
-- **Bots con IA**: navegación por waypoints, compra según su dinero, rutas por carriles, plantan, desactivan, lanzan granadas y reaccionan a disparos. Rellenan los equipos automáticamente.
-- **Salas**: varias salas simultáneas, lista de salas activas, chat global y de equipo.
-- **HUD tipo CS2**: radar giratorio con enemigos detectados, killfeed, marcador (Tab), menú de compra (B), indicadores de daño, marcador de impacto, temporizador de bomba y modo espectador.
-- **Gráficos y sonido**: Three.js con sombras, texturas procedurales, trazadoras, impactos, sangre, explosiones; audio 3D sintetizado con WebAudio (no hace falta descargar archivos).
-- Mapa original **de_dunas**: 3 carriles, túnel, A largo, A corto, medio, sitios A y B.
+### Cuentas y perfil
+- **Registro e inicio de sesión al entrar**, como en un servidor de Minecraft: para registrarte pides usuario, contraseña y repetir contraseña; para entrar, usuario y contraseña.
+- Contraseñas guardadas con hash **scrypt** y límite de intentos por IP.
+- **Foto de perfil**: se recorta y comprime en el navegador. Aparece en el lobby, en el marcador y en la barra superior de la partida: **en color si estás vivo y en gris si estás muerto**, como en CS.
+- **Estadísticas persistentes**: partidas, victorias, K/D, % de tiros a la cabeza, ADR, MVP y **rating Premier** que sube o baja según el resultado y tu rendimiento.
+
+### Lobby con amigos (como en CS2)
+- Grupos de hasta 5 jugadores con **código de invitación** o **enlace** (`?lobby=CÓDIGO`).
+- Chat de grupo, líder del grupo (corona), expulsar miembros y salir del grupo.
+- El líder pulsa **BUSCAR PARTIDA** y todo el grupo entra junto, en el mismo equipo.
+- Modo **Premier** (sala pública, se completa con bots) o **Privada** (solo tu grupo y bots, con dificultad y número de bots configurables y controles de anfitrión).
+- **Reconexión**: si sales o se corta la conexión, puedes volver a tu partida desde el lobby y conservas equipo, dinero y estadísticas.
+
+### Partida competitiva
+- **Veto de mapas estilo Premier**: al empezar, CT y T vetan mapas por turnos (votación por equipo) hasta que queda uno.
+- **MR12**: gana el primero en llegar a 13 rondas. Cambio de bando en la ronda 12 y **prórrogas MR3** con $12 500 si hay empate a 12.
+- Avisos de *última ronda de la mitad* y *punto de partida*, descanso en el medio tiempo, **MVP de cada ronda**, historial de rondas y pantalla final con estadísticas y cambio de rating.
+- Economía completa: bonus por derrotas consecutivas (de $1400 a $3400), recompensas por baja según el arma, bonus por plantar, y los T que sobreviven al tiempo no cobran.
+- Bomba: plantar 3,2 s, explosión a los 40 s, desactivar 10 s (5 s con kit).
+
+### 5 mapas cerrados
+Dunas, Almacén, Pueblo, Puerto y Templo. Tienen pasillos estrechos, túneles techados, puertas, escalones y plataformas, y cada uno tiene su propio estilo visual. Se comprueba automáticamente que no hay líneas de visión directas entre los spawns.
+
+### Armas y combate
+- **21 armas**: Glock, USP-S, P250, Tec-9, Five-SeveN, Desert Eagle, MAC-10, MP9, UMP-45, MP7, P90, Nova, Galil, FAMAS, AK-47, M4A4, SG 553, AUG, SSG 08, AWP y cuchillo (ataque fuerte y puñalada por la espalda).
+- **Granadas**: HE, cegadora, humo, **molotov e incendiaria**. El fuego quema y se apaga con humo.
+- **Penetración**: las balas atraviesan cajas y contenedores perdiendo daño (*wallbang*).
+- Disparos validados por el servidor con **compensación de lag**, hitboxes por zona, pérdida de daño por distancia, retroceso, dispersión e inspección del arma (F).
+- Killfeed con iconos de headshot, wallbang, a través del humo y sin mira.
+- **Anti-wallhack**: el servidor no envía la posición de los enemigos que tu equipo no puede ver.
+
+### Interfaz estilo CS2
+Barra superior con avatares, radar giratorio, vida y blindaje, munición, inventario con iconos, menú de compra con iconos, marcador con ADR, HS%, MVP, puntos, rating e historial de rondas, informe de daño al morir, banner de ronda con MVP y modo espectador.
+
+### Mira configurable
+**Dinámica** (se abre al moverte y disparar) **o estática**. Se puede ajustar longitud, grosor, separación, punto central, contorno, opacidad y color, con vista previa.
+
+### Bots
+- Navegan por el mapa con A* y evitan el fuego.
+- Compran según la economía.
+- Los T se agrupan antes de entrar a un sitio y los CT rotan según lo que ve su equipo.
+- Plantan, desactivan y lanzan granadas.
 
 ## Controles
 
@@ -27,7 +59,7 @@ Administrador / contacto: **elalfredonico@gmail.com**
 | Moverse / caminar / agacharse / saltar | WASD / Shift / Ctrl o C / Espacio |
 | Disparar / mira o ataque fuerte | Clic izquierdo / clic derecho |
 | Armas | 1-5, rueda del ratón, Q (arma anterior) |
-| Recargar / soltar arma | R / G |
+| Recargar / soltar / inspeccionar | R / G / F |
 | Plantar, desactivar o recoger | E (mantener) |
 | Comprar / marcador / equipo | B / Tab / M |
 | Chat / chat de equipo | Y / U |
@@ -35,33 +67,23 @@ Administrador / contacto: **elalfredonico@gmail.com**
 ## Despliegue
 
 ### 1. Servidor en Render
-
-1. Sube este repositorio a GitHub.
-2. En [Render](https://render.com) inicia sesión (por ejemplo con `elalfredonico@gmail.com`) y elige **New + → Blueprint**.
-3. Selecciona el repositorio. Render leerá `render.yaml` y creará el servicio web `strike-web`.
-4. Cuando termine, copia la URL del servicio, por ejemplo `https://strike-web-xxxx.onrender.com`.
-5. La contraseña de administrador (`ADMIN_PASSWORD`) se genera sola. La puedes ver en Render → servicio → **Environment**.
-
-> Si prefieres hacerlo a mano: **New + → Web Service**, con *Build command* `npm install` y *Start command* `npm start`.
+1. En [Render](https://render.com) crea un **Web Service** desde este repositorio:
+   - Build Command: `npm install`
+   - Start Command: `npm start`
+   - O usa **New + → Blueprint** con `render.yaml`.
+2. **Importante, para que las cuentas no se borren:** el disco de Render gratis se borra en cada reinicio. Crea una base de datos PostgreSQL gratis (por ejemplo en [neon.tech](https://neon.tech) o en Render → New → Postgres) y pon su URL en la variable de entorno `DATABASE_URL` del servicio web. Sin ella, las cuentas se guardan en un archivo que se pierde al reiniciar.
+3. Copia la URL del servicio, por ejemplo `https://strike-web-xxxx.onrender.com`.
 
 ### 2. Cliente en GitHub Pages
-
 1. Edita `js/config.js` y pon tu URL de Render en `DEFAULT_SERVER`:
    ```js
    export const DEFAULT_SERVER = 'wss://strike-web-xxxx.onrender.com/ws';
    ```
-2. En GitHub, ve a **Settings → Pages → Build and deployment → Source: GitHub Actions**.
-3. Haz push a `main`. El workflow `.github/workflows/pages.yml` publica la web en `https://TU_USUARIO.github.io/NOMBRE_REPO/`.
+2. En GitHub, ve a **Settings → Pages → Source: Deploy from a branch → `main` → `/ (root)`**.
 
-Hay otras dos formas de indicar el servidor, sin editar el código:
-- Desde el menú del juego, en **Servidor** (se guarda en el navegador).
-- Con un parámetro en la URL: `https://TU_USUARIO.github.io/NOMBRE_REPO/?server=strike-web-xxxx.onrender.com`
+También puedes indicar el servidor desde la pantalla de inicio de sesión (sección «Servidor») o con `?server=strike-web-xxxx.onrender.com` en la URL. Los enlaces de invitación ya incluyen el servidor.
 
-También puedes compartir una sala concreta con `?sala=nombre`.
-
-> El plan gratuito de Render apaga el servicio tras unos 15 minutos sin tráfico. La primera conexión puede tardar unos 50 segundos mientras se despierta; el juego lo avisa en pantalla.
-
-El servidor de Render también sirve el cliente, así que `https://strike-web-xxxx.onrender.com` funciona directamente como página del juego.
+> El plan gratuito de Render se duerme tras unos 15 minutos sin uso. La primera conexión tarda cerca de 1 minuto y el juego lo avisa en pantalla.
 
 ## Desarrollo local
 
@@ -71,41 +93,29 @@ npm start
 # abre http://localhost:3000
 ```
 
-## Comandos de chat
-
-| Comando | Descripción |
-|---|---|
-| `/help` | Lista de comandos |
-| `/admin` | Muestra el correo del administrador |
-| `/login <clave>` | Inicia sesión como administrador (usa `ADMIN_PASSWORD`) |
-| `/bots <0-5>` | Bots por equipo |
-| `/skill <0-1>` | Habilidad de los bots |
-| `/kick <nombre>` | Expulsa a un jugador |
-| `/restart` | Reinicia la partida |
-
-Si no defines `ADMIN_PASSWORD`, cualquier jugador puede usar los comandos de administración.
-
 ## Variables de entorno del servidor
 
 | Variable | Por defecto | Descripción |
 |---|---|---|
 | `PORT` | 3000 | Puerto HTTP (Render lo define solo) |
+| `DATABASE_URL` | (vacío) | PostgreSQL para guardar las cuentas de forma permanente |
 | `ADMIN_EMAIL` | elalfredonico@gmail.com | Contacto mostrado en el juego |
-| `ADMIN_PASSWORD` | (vacío) | Clave para `/login` |
-| `BOTS_PER_TEAM` | 4 | Tamaño mínimo de cada equipo, que se completa con bots |
+| `ADMIN_PASSWORD` | (vacío) | Clave para `/rcon <clave>` en el chat |
+| `BOTS_PER_TEAM` | 5 | Tamaño de cada equipo en partidas públicas, completado con bots |
 | `BOT_SKILL` | 0.5 | Habilidad de los bots, de 0 a 1 |
-| `MAX_PLAYERS_PER_ROOM` | 10 | Máximo de jugadores humanos por sala |
-| `MAX_ROOMS` | 20 | Máximo de salas simultáneas |
+| `MAX_ROOMS` | 20 | Máximo de partidas simultáneas |
+
+## Comandos de chat
+`/help`, `/admin`, `/rcon <clave>`, y con permisos de administrador `/bots <0-5>`, `/restart` y `/kick <nombre>`. En las salas privadas, el anfitrión tiene estos controles en el menú de pausa (Esc).
 
 ## Estructura
 
 ```
 index.html, style.css   Página del juego (GitHub Pages)
-js/                     Cliente: render, entrada, HUD, audio, efectos
-shared/                 Código compartido cliente/servidor: mapa, física, armas
-server/                 Servidor: salas, rondas, economía, bots, navegación
+js/                     Cliente: app y lobby (main), partida (game), HUD, iconos, mundo 3D, audio, efectos
+shared/                 Código compartido: mapas (cuadrícula), física, armas
+server/                 Servidor: cuentas (store), lobby y grupos, salas y reglas, bots, navegación A*
 render.yaml             Blueprint para Render
-.github/workflows/      Despliegue automático en GitHub Pages
 ```
 
-Proyecto de fans sin relación con Valve. No usa recursos originales de Counter-Strike: todos los modelos, texturas y sonidos se generan por código.
+Proyecto de fans sin relación con Valve. No usa recursos originales de Counter-Strike: todos los modelos, texturas, iconos y sonidos se generan por código.

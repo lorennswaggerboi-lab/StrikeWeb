@@ -1,21 +1,26 @@
-// Lógica autoritativa de una sala: rondas, economía, disparos, granadas, bomba y bots.
+// Partida autoritativa: veto de mapas estilo Premier, rondas competitivas (MR12 + prórrogas),
+// economía, disparos con compensación de lag y penetración, granadas, bomba, bots y estadísticas.
 import { performance } from 'perf_hooks';
-import { BOXES, SPAWNS, SPAWN_CENTER, BUY_RADIUS, siteAt, SITES } from '../shared/map.js';
+import { getMap, MAP_IDS, siteAt, BUY_RADIUS } from '../shared/maps.js';
 import { WEAPONS, NADES, NADE_ORDER, MAX_NADES, EQUIPMENT, ECONOMY, damageFalloff } from '../shared/weapons.js';
 import {
-  raycast, rayPlayer, findOverlap, eyeHeight, viewDir, segmentHitsSphere,
+  raycast, rayPlayer, rayBoxExit, findOverlap, eyeHeight, viewDir, segmentHitsSphere,
   PLAYER_RADIUS, STAND_HEIGHT, CROUCH_HEIGHT, GRAVITY,
 } from '../shared/physics.js';
 import { BotBrain } from './bot.js';
+import { Nav } from './nav.js';
 
 export const now = () => performance.now() / 1000;
 
 const T = {
-  warmup: 15, freeze: 6, round: 115, bomb: 40, plant: 3.2, defuse: 10, defuseKit: 5,
-  post: 6, buy: 26, matchEnd: 12, warmupRespawn: 2.5,
+  warmupPublic: 40, warmupPrivate: 90, warmupFull: 8, voteTurn: 12, voteReveal: 5,
+  freeze: 12, round: 115, bomb: 40, plant: 3.2, defuse: 10, defuseKit: 5,
+  post: 6, buy: 20, halftime: 12, matchEnd: 15, warmupRespawn: 2,
 };
-const WIN_ROUNDS = 13;
-const HALF_ROUNDS = 12;
+const BAN_ORDER = ['CT', 'T', 'CT', 'T'];
+const MAX_TEAM_HUMANS = 5;
+const PENETRABLE = new Set(['crate', 'barrel', 'lowwall', 'container']);
+const MATCH_PHASES = new Set(['freeze', 'live', 'post', 'halftime']);
 
 const BOT_NAMES = [
   'Alfredo', 'Nico', 'Chispa', 'Tango', 'Rayo', 'Coyote', 'Piraña', 'Halcón', 'Sombra', 'Toro',
@@ -27,111 +32,165 @@ const r3 = v => Math.round(v * 1000) / 1000;
 const num = (v, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const other = team => (team === 'T' ? 'CT' : 'T');
+const pick = arr => arr[(Math.random() * arr.length) | 0];
 
 function shuffle(a) {
   for (let i = a.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [a[i], a[j]] = [a[j], a[i]]; }
   return a;
 }
 
-export function sanitizeName(s, fallback = 'Jugador') {
-  const clean = String(s ?? '').replace(/[^\p{L}\p{N} _\-.!?]/gu, '').trim().slice(0, 16);
-  return clean || fallback;
-}
+const emptyStats = () => ({ kills: 0, deaths: 0, assists: 0, mvps: 0, dmg: 0, hs: 0, score: 0 });
 
 export class Room {
-  constructor(name, config) {
-    this.name = name;
+  constructor(id, { isPrivate = false, owner = null, config, onClose, onMatchEnd }) {
+    this.id = id;
+    this.isPrivate = isPrivate;
+    this.owner = owner;
     this.config = config;
+    this.onClose = onClose;
+    this.onMatchEnd = onMatchEnd;
     this.players = new Map();
+    this.records = new Map();
     this.nextId = 1;
     this.nextEnt = 1;
-    this.phase = 'warmup';
-    this.phaseEnd = now() + T.warmup;
-    this.round = 0;
+    this.botTarget = config.botsPerTeam;
+    this.botSkill = config.botSkill;
+    this.botNameIdx = (Math.random() * BOT_NAMES.length) | 0;
+    this.tickCount = 0;
+    this.closed = false;
+    this.loadMap(pick(MAP_IDS));
+    this.resetRoundState();
     this.score = { T: 0, CT: 0 };
-    this.lossStreak = { T: 0, CT: 0 };
+    this.history = [];
+    this.round = 0;
+    this.phase = 'warmup';
+    this.phaseEnd = now() + (isPrivate ? T.warmupPrivate : T.warmupPublic);
+    this.vote = null;
+    this.intel = { T: null, CT: null };
+    this.rebalanceBots(true);
+  }
+
+  loadMap(id) {
+    this.map = getMap(id);
+    this.nav = new Nav(this.map);
+    this.boxes = this.map.boxes;
+    // al aparecer, mirar hacia la salida del spawn (primer tramo de la ruta hacia el rival)
+    this.spawnLook = {};
+    for (const team of ['T', 'CT']) {
+      const [sx, sz] = this.map.spawnCenter[team];
+      const [ex, ez] = this.map.spawnCenter[other(team)];
+      const path = this.nav.findPath(sx, sz, ex, ez);
+      this.spawnLook[team] = path.find(pt => Math.hypot(pt[0] - sx, pt[1] - sz) > 8) || [ex, ez];
+    }
+  }
+
+  resetRoundState() {
     this.bomb = { state: 'none' };
     this.nades = [];
     this.smokes = [];
+    this.fires = [];
     this.drops = [];
-    this.botTarget = config.botsPerTeam;
-    this.botSkill = config.botSkill;
-    this.tickCount = 0;
-    this.buyEnd = 0;
-    this.halftimePending = false;
-    this.matchOver = null;
-    this.botNameIdx = (Math.random() * BOT_NAMES.length) | 0;
-    this.createdAt = Date.now();
-    this.rebalanceBots(true);
+    this.rdmg = new Map();
+    this.nav?.setDanger([]);
   }
 
   // ---------- jugadores ----------
   createPlayer(name, isBot) {
-    const p = {
-      id: this.nextId++, name, isBot, ws: null, team: 'SPEC',
+    return {
+      id: this.nextId++, name, isBot, session: null, account: null, avatar: null, rating: 0, team: 'SPEC',
       x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, h: STAND_HEIGHT, onGround: true,
       yaw: 0, pitch: 0, crouch: false, scoped: false,
       alive: false, hp: 0, armor: 0, helmet: false, defuser: false,
-      money: this.phase === 'warmup' ? 10000 : ECONOMY.start,
-      kills: 0, deaths: 0, assists: 0, mvps: 0,
-      inv: { 1: null, 2: null, 3: { id: 'knife' } }, nades: { he: 0, flash: 0, smoke: 0 }, bomb: false,
+      money: this.phase === 'warmup' ? 16000 : ECONOMY.start,
+      st: emptyStats(), roundKills: 0,
+      inv: { 1: null, 2: null, 3: { id: 'knife' } }, nades: this.emptyNades(), bomb: false,
       slot: 2, lastShot: 0, reloadUntil: 0, reloadSlot: 0,
-      hist: [], dmgBy: {}, flashedUntil: 0, ping: 0, spawnSeq: 0,
-      lastInputT: 0, using: false, action: null, deadAt: 0, spotted: false, isAdmin: false,
-      chatTimes: [],
+      hist: [], dmgBy: {}, flashedUntil: 0, ping: 0, spawnSeq: 0, fireAcc: 0,
+      lastInputT: 0, using: false, action: null, deadAt: 0, spotted: false,
+      chatTimes: [], partyId: null, ai: null,
     };
-    if (isBot) p.ai = new BotBrain(this, p, this.botSkill);
-    return p;
   }
 
-  humanCount() {
-    let n = 0;
-    for (const p of this.players.values()) if (!p.isBot) n++;
-    return n;
+  emptyNades() { return Object.fromEntries(NADE_ORDER.map(k => [k, 0])); }
+
+  humans() { return [...this.players.values()].filter(p => !p.isBot); }
+  humanCount() { return this.humans().length; }
+  teamMembers(team) { return [...this.players.values()].filter(p => p.team === team); }
+  teamHumans(team) { return this.teamMembers(team).filter(p => !p.isBot).length; }
+
+  // ¿Puede entrar un grupo de n personas? Devuelve el equipo o null.
+  slotFor(n) {
+    if (this.closed || this.phase === 'matchend') return null;
+    const t = this.teamHumans('T'), c = this.teamHumans('CT');
+    const opts = [];
+    if (t + n <= MAX_TEAM_HUMANS) opts.push(['T', t]);
+    if (c + n <= MAX_TEAM_HUMANS) opts.push(['CT', c]);
+    if (!opts.length) return null;
+    opts.sort((a, b) => a[1] - b[1]);
+    return opts[0][0];
   }
 
-  teamMembers(team) {
-    const out = [];
-    for (const p of this.players.values()) if (p.team === team) out.push(p);
-    return out;
-  }
-
-  autoTeam() {
-    const count = t => { let h = 0, all = 0; for (const p of this.players.values()) if (p.team === t) { all++; if (!p.isBot) h++; } return [h, all]; };
-    const [th, ta] = count('T'), [ch, ca] = count('CT');
-    if (th !== ch) return th < ch ? 'T' : 'CT';
-    if (ta !== ca) return ta < ca ? 'T' : 'CT';
-    return Math.random() < 0.5 ? 'T' : 'CT';
-  }
-
-  addHuman(ws, name, teamPref) {
-    const p = this.createPlayer(sanitizeName(name), false);
-    p.ws = ws;
+  addHuman(session, teamPref) {
+    const user = session.user;
+    const rec = this.records.get(user.name.toLowerCase());
+    const p = this.createPlayer(user.name, false);
+    p.session = session;
+    p.account = user.name;
+    p.avatar = user.avatar || null;
+    p.rating = user.stats?.rating ?? 1000;
+    p.partyId = session.party?.code || null;
     this.players.set(p.id, p);
-    this.send(p, { t: 'welcome', id: p.id, room: this.name, adminEmail: this.config.adminEmail, admin: !this.config.adminPassword });
-    const team = teamPref === 'T' || teamPref === 'CT' ? teamPref : this.autoTeam();
+    let team = teamPref === 'T' || teamPref === 'CT' ? teamPref : this.slotFor(1) || 'T';
+    if (rec && MATCH_PHASES.has(this.phase)) {
+      team = rec.team;
+      p.st = rec.st;
+      p.money = rec.money;
+      this.records.delete(user.name.toLowerCase());
+    }
+    this.send(p, {
+      t: 'welcome', id: p.id, room: this.id, private: this.isPrivate, owner: this.owner, map: this.map.id,
+      adminEmail: this.config.adminEmail, vote: this.voteState(),
+      avatars: [...this.players.values()].filter(q => q.avatar).map(q => [q.id, q.avatar]),
+    });
+    if (p.avatar) this.broadcast({ t: 'avatar', id: p.id, av: p.avatar }, p);
     this.setTeam(p, team, true);
-    this.systemMsg(`${p.name} se ha unido (${team === 'T' ? 'Terroristas' : 'Antiterroristas'})`);
-    this.rebalanceBots(this.phase === 'warmup');
+    this.systemMsg(`${p.name} se ha unido${rec ? ' (reconectado)' : ''}`);
+    this.rebalanceBots(this.phase === 'warmup' || this.phase === 'mapvote');
+    if (this.phase === 'warmup' && !this.isPrivate && this.humanCount() >= 10) this.phaseEnd = Math.min(this.phaseEnd, now() + T.warmupFull);
     this.sendRoster();
     return p;
   }
 
-  removePlayer(p) {
+  removePlayer(p, reason = 'ha salido') {
     if (!this.players.has(p.id)) return;
     if (p.alive) this.dropEverything(p);
     if (this.bomb.defuser === p.id) this.bomb.defuser = null;
+    if (!p.isBot && MATCH_PHASES.has(this.phase) && p.team !== 'SPEC') {
+      this.records.set(p.account.toLowerCase(), { team: p.team, st: p.st, money: p.money });
+    }
     this.players.delete(p.id);
     if (!p.isBot) {
-      this.systemMsg(`${p.name} ha salido`);
-      this.rebalanceBots(this.phase === 'warmup');
+      this.systemMsg(`${p.name} ${reason}`);
+      if (this.owner && p.account === this.owner) {
+        const next = this.humans()[0];
+        this.owner = next ? next.account : null;
+        if (next) this.broadcast({ t: 'owner', owner: this.owner });
+      }
+      if (this.humanCount() === 0) { this.close(); return; }
+      this.rebalanceBots(this.phase === 'warmup' || this.phase === 'mapvote');
     }
     this.checkRoundEnd();
     this.sendRoster();
   }
 
+  close() {
+    if (this.closed) return;
+    this.closed = true;
+    this.onClose?.(this);
+  }
+
   setTeam(p, team, initial = false) {
-    if (p.team === team) return;
+    if (p.team === team && !initial) return;
     if (p.alive && !initial) {
       this.dropEverything(p);
       p.alive = false;
@@ -140,9 +199,9 @@ export class Room {
     p.team = team;
     this.resetInventory(p);
     if (team === 'SPEC') return;
-    if (this.phase === 'warmup' || this.phase === 'freeze') {
-      const idx = this.teamMembers(team).length - 1;
-      this.spawn(p, idx);
+    if (this.phase === 'warmup' || this.phase === 'mapvote' || this.phase === 'freeze') {
+      this.spawn(p, this.teamMembers(team).length - 1);
+      if (this.phase === 'freeze' && p.isBot) p.ai.onRoundStart();
     } else {
       p.alive = false;
       p.deadAt = now();
@@ -154,12 +213,21 @@ export class Room {
   changeTeam(p, team) {
     if (team !== 'T' && team !== 'CT' && team !== 'SPEC') return;
     if (team === p.team) return;
+    // en partidas públicas solo se puede cambiar durante el calentamiento
+    if (!this.isPrivate && this.phase !== 'warmup') {
+      this.send(p, { t: 'msg', text: 'Solo puedes cambiar de equipo durante el calentamiento', kind: 'info' });
+      return;
+    }
+    if (team !== 'SPEC' && this.teamHumans(team) >= MAX_TEAM_HUMANS) {
+      this.send(p, { t: 'msg', text: 'Ese equipo está completo', kind: 'info' });
+      return;
+    }
     const t = now();
-    if (t - (p.lastTeamChange || 0) < 3) return;
+    if (t - (p.lastTeamChange || 0) < 2) return;
     p.lastTeamChange = t;
     this.setTeam(p, team);
     this.systemMsg(`${p.name} se cambió a ${team === 'T' ? 'Terroristas' : team === 'CT' ? 'Antiterroristas' : 'Espectadores'}`);
-    this.rebalanceBots(this.phase === 'warmup');
+    this.rebalanceBots(this.phase === 'warmup' || this.phase === 'mapvote');
     this.sendRoster();
   }
 
@@ -167,7 +235,7 @@ export class Room {
     const pistol = p.team === 'CT' ? 'usp' : 'glock';
     const w = WEAPONS[pistol];
     p.inv = { 1: null, 2: { id: pistol, mag: w.mag, res: w.res }, 3: { id: 'knife' } };
-    p.nades = { he: 0, flash: 0, smoke: 0 };
+    p.nades = this.emptyNades();
     p.bomb = false;
     p.armor = 0;
     p.helmet = false;
@@ -176,7 +244,6 @@ export class Room {
     p.reloadUntil = 0;
   }
 
-  // Mantiene cada equipo con `botTarget` miembros como mínimo usando bots.
   rebalanceBots(immediate) {
     for (const team of ['T', 'CT']) {
       const members = this.teamMembers(team);
@@ -187,12 +254,12 @@ export class Room {
         for (let i = bots.length; i < want; i++) this.addBot(team);
       } else if (bots.length > want) {
         let extra = bots.length - want;
-        // primero quitar bots muertos; los vivos solo si es inmediato
         const ordered = [...bots].sort((a, b) => (a.alive ? 1 : 0) - (b.alive ? 1 : 0));
         for (const b of ordered) {
           if (extra <= 0) break;
           if (b.alive && !immediate && this.phase === 'live') continue;
-          this.removePlayer(b);
+          this.players.delete(b.id);
+          if (b.alive) this.dropEverything(b);
           extra--;
         }
       }
@@ -202,10 +269,12 @@ export class Room {
   addBot(team) {
     const name = 'BOT ' + BOT_NAMES[this.botNameIdx++ % BOT_NAMES.length];
     const b = this.createPlayer(name, true);
+    b.ai = new BotBrain(this, b, this.botSkill);
+    b.rating = 0;
     this.players.set(b.id, b);
     b.team = team;
     this.resetInventory(b);
-    if (this.phase === 'warmup' || this.phase === 'freeze') {
+    if (this.phase === 'warmup' || this.phase === 'mapvote' || this.phase === 'freeze') {
       this.spawn(b, this.teamMembers(team).length - 1);
       if (this.phase === 'freeze') b.ai.onRoundStart();
     } else {
@@ -216,16 +285,17 @@ export class Room {
   }
 
   spawn(p, idx) {
-    const list = SPAWNS[p.team];
+    const list = this.map.spawns[p.team];
     const [sx, sz] = list[((idx % list.length) + list.length) % list.length];
-    p.x = sx + (Math.random() - 0.5) * 0.6;
-    p.z = sz + (Math.random() - 0.5) * 0.6;
+    p.x = sx + (Math.random() - 0.5) * 0.4;
+    p.z = sz + (Math.random() - 0.5) * 0.4;
     p.y = 0;
     p.vx = p.vy = p.vz = 0;
     p.h = STAND_HEIGHT;
     p.crouch = false;
     p.scoped = false;
-    p.yaw = p.team === 'T' ? 0 : Math.PI;
+    const c = this.spawnLook[p.team];
+    p.yaw = Math.atan2(-(c[0] - p.x), -(c[1] - p.z));
     p.pitch = 0;
     p.alive = true;
     p.hp = 100;
@@ -234,38 +304,30 @@ export class Room {
     p.using = false;
     p.reloadUntil = 0;
     p.dmgBy = {};
+    p.fireAcc = 0;
     p.spawnSeq++;
     p.hist = [{ t: now(), x: p.x, y: p.y, z: p.z, c: false }];
     p.lastInputT = now();
-    if (!p.inv[p.slot] && p.slot <= 3) p.slot = this.bestSlot(p);
-    if (this.phase === 'warmup') p.money = 10000;
+    if (p.slot <= 3 && !p.inv[p.slot]) p.slot = this.bestSlot(p);
+    if (this.phase === 'warmup' || this.phase === 'mapvote') p.money = 16000;
     this.send(p, { t: 'spawn', x: p.x, y: p.y, z: p.z, yaw: p.yaw, sp: p.spawnSeq });
     if (p.isBot) p.ai.onSpawn();
   }
 
-  bestSlot(p) {
-    if (p.inv[1]) return 1;
-    if (p.inv[2]) return 2;
-    return 3;
-  }
+  bestSlot(p) { return p.inv[1] ? 1 : p.inv[2] ? 2 : 3; }
 
   // ---------- red ----------
   send(p, obj) {
-    if (p.ws && p.ws.readyState === 1) p.ws.send(typeof obj === 'string' ? obj : JSON.stringify(obj));
+    if (p.session) p.session.send(typeof obj === 'string' ? obj : JSON.stringify(obj));
   }
 
   broadcast(obj, except = null) {
     const s = JSON.stringify(obj);
-    for (const p of this.players.values()) if (p !== except && p.ws) this.send(p, s);
+    for (const p of this.players.values()) if (p !== except && p.session) p.session.send(s);
   }
 
-  systemMsg(text) {
-    this.broadcast({ t: 'chat', name: '', msg: text, sys: 1 });
-  }
-
-  centerMsg(text, kind = 'info') {
-    this.broadcast({ t: 'msg', text, kind });
-  }
+  systemMsg(text) { this.broadcast({ t: 'chat', name: '', msg: text, sys: 1 }); }
+  centerMsg(text, kind = 'info') { this.broadcast({ t: 'msg', text, kind }); }
 
   onMessage(p, m) {
     switch (m.t) {
@@ -279,6 +341,8 @@ export class Room {
       case 'd': this.dropCurrent(p); break;
       case 'team': this.changeTeam(p, m.team); break;
       case 'c': this.onChat(p, m); break;
+      case 'vote': this.onVote(p, String(m.map || '')); break;
+      case 'host': this.onHost(p, m); break;
       case 'ping':
         p.ping = clamp(num(m.rtt, 0), 0, 9999) | 0;
         this.send(p, { t: 'pong', c: num(m.c), s: now() * 1000 });
@@ -290,9 +354,10 @@ export class Room {
     p.yaw = num(m.yw, p.yaw);
     p.pitch = clamp(num(m.pt, p.pitch), -1.55, 1.55);
     p.scoped = !!m.s;
+    p.walking = !!m.wk;
     if (!p.alive || m.sp !== p.spawnSeq) return;
     const crouch = !!m.c;
-    if (this.phase === 'freeze') { p.crouch = crouch; return; }
+    if (this.phase === 'freeze' || this.phase === 'halftime') { p.crouch = crouch; return; }
     const x = num(m.x, NaN), y = num(m.y, NaN), z = num(m.z, NaN);
     if (!Number.isFinite(x + y + z)) return;
     const t = now();
@@ -300,7 +365,7 @@ export class Room {
     const dist = Math.hypot(x - p.x, z - p.z);
     const h = crouch ? CROUCH_HEIGHT : STAND_HEIGHT;
     if (dist > 9.5 * dtv + 1.2 || y < -0.5 || y > 12 ||
-      findOverlap(x, y + 0.08, z, PLAYER_RADIUS - 0.12, h - 0.16, BOXES)) {
+      findOverlap(x, y + 0.08, z, PLAYER_RADIUS - 0.12, h - 0.16, this.boxes)) {
       this.correct(p);
       return;
     }
@@ -335,9 +400,7 @@ export class Room {
   }
 
   // ---------- armas ----------
-  currentItem(p) {
-    return p.slot <= 3 ? p.inv[p.slot] : null;
-  }
+  currentItem(p) { return p.slot <= 3 ? p.inv[p.slot] : null; }
 
   weaponIdOf(p) {
     if (p.slot === 4) return 'nade';
@@ -362,6 +425,7 @@ export class Room {
     p.reloadUntil = now() + w.reload;
     p.reloadSlot = p.slot;
     p.scoped = false;
+    this.broadcast({ t: 'snd', s: 'reload', id: p.id, x: r2(p.x), y: r2(p.y + 1), z: r2(p.z) }, p);
   }
 
   finishReload(p) {
@@ -375,7 +439,7 @@ export class Room {
   }
 
   onFire(p, m) {
-    if (!p.alive || this.phase === 'freeze') return;
+    if (!p.alive || this.phase === 'freeze' || this.phase === 'halftime') return;
     const item = this.currentItem(p);
     if (!item) return;
     const w = WEAPONS[item.id];
@@ -388,8 +452,7 @@ export class Room {
     const eye = [p.x, p.y + eyeHeight(p.crouch), p.z];
     let o = eye;
     if (Array.isArray(m.o) && m.o.length === 3 && m.o.every(Number.isFinite)) {
-      const d = Math.hypot(m.o[0] - eye[0], m.o[1] - eye[1], m.o[2] - eye[2]);
-      if (d < 1.6) o = m.o;
+      if (Math.hypot(m.o[0] - eye[0], m.o[1] - eye[1], m.o[2] - eye[2]) < 1.6) o = m.o;
     }
     if (w.cat === 'knife') {
       p.lastShot = t;
@@ -398,15 +461,13 @@ export class Room {
     }
     if (item.mag <= 0) return;
     const view = viewDir(p.yaw, p.pitch);
-    const pellets = w.pellets || 1;
     const dirs = [];
     if (Array.isArray(m.d)) {
-      for (const d of m.d.slice(0, pellets)) {
+      for (const d of m.d.slice(0, w.pellets || 1)) {
         if (!Array.isArray(d) || d.length !== 3 || !d.every(Number.isFinite)) continue;
         const len = Math.hypot(d[0], d[1], d[2]);
         if (len < 0.5) continue;
         const nd = [d[0] / len, d[1] / len, d[2] / len];
-        // tolerancia por retroceso, dispersión y latencia del ángulo de visión
         if (nd[0] * view[0] + nd[1] * view[1] + nd[2] * view[2] < Math.cos(0.7)) continue;
         dirs.push(nd);
       }
@@ -417,41 +478,75 @@ export class Room {
     this.fireBullets(p, o, dirs, w, item.id, rt);
   }
 
-  fireBullets(p, o, dirs, w, wid, rt) {
-    const ends = [];
-    const dmgMap = new Map();
-    const range = w.range || 250;
-    for (const d of dirs) {
-      const mh = raycast(o, d, range, BOXES);
-      let tMax = mh ? mh.t : range;
+  // Trazado con penetración: atraviesa cajas/contenedores finos perdiendo daño.
+  traceBullet(p, o, d, w, rt) {
+    let origin = o, remaining = w.range || 250, mul = 1, pens = 0, traveled = 0;
+    const marks = [];
+    for (let seg = 0; seg < 3; seg++) {
+      const mh = raycast(origin, d, remaining, this.boxes);
+      let tMax = mh ? mh.t : remaining;
       let victim = null, group = null;
       for (const q of this.players.values()) {
         if (q === p || !q.alive) continue;
         const pose = this.poseAt(q, rt);
-        const hit = rayPlayer(o, d, tMax, pose.x, pose.y, pose.z, pose.c);
+        const hit = rayPlayer(origin, d, tMax, pose.x, pose.y, pose.z, pose.c);
         if (hit && hit.t < tMax) { tMax = hit.t; victim = q; group = hit.group; }
       }
-      ends.push([r2(o[0] + d[0] * tMax), r2(o[1] + d[1] * tMax), r2(o[2] + d[2] * tMax), victim ? 1 : mh ? 0 : 2]);
-      if (victim && victim.team !== p.team) {
-        const res = this.calcDamage(w, tMax, group, victim);
-        const prev = dmgMap.get(victim) || { dmg: 0, armor: 0, hs: false };
-        prev.dmg += res.dmg; prev.armor += res.armor; prev.hs = prev.hs || group === 'head';
-        dmgMap.set(victim, prev);
+      const end = [origin[0] + d[0] * tMax, origin[1] + d[1] * tMax, origin[2] + d[2] * tMax];
+      if (victim) return { end, victim, group, dist: traveled + tMax, mul, wb: pens > 0, marks };
+      if (!mh) return { end, victim: null, kind: 2, marks };
+      if (!PENETRABLE.has(mh.box.mat) || !w.pen) return { end, victim: null, kind: 0, marks };
+      const inside = [end[0] + d[0] * 0.001, end[1] + d[1] * 0.001, end[2] + d[2] * 0.001];
+      const thick = rayBoxExit(inside, d, mh.box);
+      if (thick > w.pen) return { end, victim: null, kind: 0, marks };
+      marks.push(end.map(r2));
+      mul *= Math.max(0.2, 0.6 - thick * 0.15);
+      pens++;
+      traveled += tMax + thick;
+      remaining -= tMax + thick + 0.01;
+      origin = [inside[0] + d[0] * (thick + 0.01), inside[1] + d[1] * (thick + 0.01), inside[2] + d[2] * (thick + 0.01)];
+      if (remaining <= 0) return { end: origin, victim: null, kind: 2, marks };
+    }
+    return { end: origin, victim: null, kind: 2, marks };
+  }
+
+  fireBullets(p, o, dirs, w, wid, rt) {
+    const ends = [];
+    const dmgMap = new Map();
+    for (const d of dirs) {
+      const r = this.traceBullet(p, o, d, w, rt);
+      for (const mk of r.marks) ends.push([...mk, 3]);
+      ends.push([r2(r.end[0]), r2(r.end[1]), r2(r.end[2]), r.victim ? 1 : r.kind]);
+      if (r.victim && r.victim.team !== p.team) {
+        const res = this.calcDamage(w, r.dist, r.group, r.victim, r.mul);
+        const prev = dmgMap.get(r.victim) || { dmg: 0, armor: 0, hs: false, wb: false, hits: 0 };
+        prev.dmg += res.dmg; prev.armor += res.armor; prev.hits++;
+        prev.hs = prev.hs || r.group === 'head';
+        prev.wb = prev.wb || r.wb;
+        prev.smoke = this.smokeBetween(o, r.end);
+        dmgMap.set(r.victim, prev);
       }
     }
     this.broadcast({ t: 'shot', id: p.id, w: wid, o: o.map(r2), e: ends }, p.isBot ? null : p);
     for (const b of this.players.values()) if (b.isBot && b.alive) b.ai.onNoise(p, o);
-    for (const [victim, r] of dmgMap) this.applyDamage(victim, p, r.dmg, r.armor, wid, r.hs, o);
+    for (const [victim, r] of dmgMap) {
+      const flags = { hs: r.hs, wb: r.wb, sm: r.smoke, ns: w.cat === 'sniper' && !p.scoped };
+      this.applyDamage(victim, p, r.dmg, r.armor, wid, flags, o, r.hits);
+    }
   }
 
-  calcDamage(w, dist, group, v) {
-    let dmg = w.dmg * damageFalloff(w, dist);
+  smokeBetween(a, b) {
+    for (const s of this.smokes) if (segmentHitsSphere(a, b, [s.x, s.y, s.z], 3.6)) return true;
+    return false;
+  }
+
+  calcDamage(w, dist, group, v, mul = 1) {
+    let dmg = w.dmg * damageFalloff(w, dist) * mul;
     if (group === 'head') dmg *= 4;
     else if (group === 'stomach') dmg *= 1.25;
     else if (group === 'legs') dmg *= 0.75;
     let armor = 0;
-    const protectedHit = v.armor > 0 && group !== 'legs' && (group !== 'head' || v.helmet);
-    if (protectedHit) {
+    if (v.armor > 0 && group !== 'legs' && (group !== 'head' || v.helmet)) {
       const hpDmg = dmg * w.ap;
       armor = (dmg - hpDmg) * 0.5;
       if (armor > v.armor) { dmg = dmg - v.armor * 2; armor = v.armor; } else dmg = hpDmg;
@@ -472,7 +567,7 @@ export class Room {
       if (d > w.range + 0.5 || d < 1e-3) continue;
       const cos = (dx * view[0] + dy * view[1] + dz * view[2]) / d;
       if (cos < (d < 1 ? 0.3 : 0.82)) continue;
-      if (raycast(o, [dx / d, dy / d, dz / d], d, BOXES)) continue;
+      if (raycast(o, [dx / d, dy / d, dz / d], d, this.boxes)) continue;
       if (d < bestD) { bestD = d; best = q; bestPose = pose; }
     }
     this.broadcast({ t: 'snd', s: 'knife', x: r2(o[0]), y: r2(o[1]), z: r2(o[2]) }, p.isBot ? null : p);
@@ -483,57 +578,87 @@ export class Room {
     let dmg = heavy ? (back ? 180 : 65) : (back ? 90 : 40);
     let armor = 0;
     if (best.armor > 0) { const hp = dmg * w.ap; armor = Math.min(best.armor, Math.round((dmg - hp) * 0.5)); dmg = Math.round(hp); }
-    this.applyDamage(best, p, dmg, armor, 'knife', false, o);
+    this.applyDamage(best, p, dmg, armor, 'knife', {}, o, 1);
   }
 
-  applyDamage(v, a, dmg, armorDmg, wid, hs, src) {
+  applyDamage(v, a, dmg, armorDmg, wid, flags, src, hits = 1) {
     if (!v.alive) return;
+    const real = Math.min(dmg, v.hp);
     v.hp -= dmg;
     v.armor = Math.max(0, v.armor - armorDmg);
     if (v.armor === 0) v.helmet = false;
-    if (a) v.dmgBy[a.id] = (v.dmgBy[a.id] || 0) + dmg;
-    if (a && a !== v) this.send(a, { t: 'hc', d: dmg, hs: hs ? 1 : 0, k: v.hp <= 0 ? 1 : 0 });
+    if (a) {
+      v.dmgBy[a.id] = (v.dmgBy[a.id] || 0) + real;
+      if (a.team !== v.team && MATCH_PHASES.has(this.phase)) a.st.dmg += real;
+      const key = a.id + '>' + v.id;
+      const rec = this.rdmg.get(key) || { d: 0, h: 0 };
+      rec.d += real; rec.h += hits;
+      this.rdmg.set(key, rec);
+    }
+    if (a && a !== v) this.send(a, { t: 'hc', d: dmg, hs: flags.hs ? 1 : 0, k: v.hp <= 0 ? 1 : 0, ar: armorDmg > 0 ? 1 : 0 });
     this.send(v, { t: 'dmg', d: dmg, x: r2(src[0]), z: r2(src[2]) });
     if (v.isBot && a && a !== v) v.ai.onDamaged(a);
-    if (v.hp <= 0) this.kill(v, a, wid, hs);
+    if (v.hp <= 0) this.kill(v, a, wid, flags);
   }
 
-  kill(v, a, wid, hs) {
+  kill(v, a, wid, flags = {}) {
     const t = now();
     v.alive = false;
     v.hp = 0;
     v.deadAt = t;
-    v.deaths++;
     v.using = false;
     v.action = null;
     v.scoped = false;
     if (this.bomb.defuser === v.id) this.bomb.defuser = null;
     this.dropEverything(v);
-    if (a && a !== v) {
+    const counts = MATCH_PHASES.has(this.phase);
+    if (counts) v.st.deaths++;
+    if (a && a !== v && counts) {
       if (a.team !== v.team) {
-        a.kills++;
-        if (this.phase !== 'warmup') a.money = Math.min(ECONOMY.max, a.money + (WEAPONS[wid]?.kill ?? 300));
+        a.st.kills++;
+        a.st.score += 2;
+        a.roundKills++;
+        if (flags.hs) a.st.hs++;
+        a.money = Math.min(ECONOMY.max, a.money + (WEAPONS[wid]?.kill ?? 300));
       } else {
-        a.kills--;
+        a.st.kills--;
+        a.st.score -= 2;
         a.money = Math.max(0, a.money - ECONOMY.teamKillPenalty);
       }
-    }
+    } else if (a === v && counts) v.st.score -= 1;
+    let assister = null;
     for (const id in v.dmgBy) {
       const q = this.players.get(+id);
-      if (q && q !== a && q !== v && v.dmgBy[id] >= 41 && q.team !== v.team) q.assists++;
+      if (q && q !== a && q !== v && v.dmgBy[id] >= 41 && q.team !== v.team) {
+        if (counts) { q.st.assists++; q.st.score += 1; }
+        assister = q;
+      }
     }
     v.dmgBy = {};
-    this.broadcast({ t: 'kill', k: a ? a.id : -1, v: v.id, w: wid, hs: hs ? 1 : 0 });
+    this.broadcast({
+      t: 'kill', k: a ? a.id : -1, v: v.id, a: assister ? assister.id : -1, w: wid,
+      hs: flags.hs ? 1 : 0, wb: flags.wb ? 1 : 0, sm: flags.sm ? 1 : 0, ns: flags.ns ? 1 : 0,
+    });
+    if (!v.isBot) this.sendDamageReport(v);
     this.checkRoundEnd();
+  }
+
+  sendDamageReport(p) {
+    const list = [];
+    for (const q of this.players.values()) {
+      if (q === p) continue;
+      const g = this.rdmg.get(p.id + '>' + q.id), tk = this.rdmg.get(q.id + '>' + p.id);
+      if (g || tk) list.push({ id: q.id, n: q.name, tm: q.team, gd: g?.d || 0, gh: g?.h || 0, td: tk?.d || 0, th: tk?.h || 0 });
+    }
+    if (list.length) this.send(p, { t: 'dmgrep', list });
   }
 
   // ---------- objetos en el suelo ----------
   dropEverything(p) {
     if (p.bomb) this.dropBomb(p, false);
-    const item = p.inv[1] || p.inv[2];
-    if (item) {
-      const slot = p.inv[1] ? 1 : 2;
-      this.spawnDrop(p, item, false);
+    const slot = p.inv[1] ? 1 : p.inv[2] ? 2 : 0;
+    if (slot) {
+      this.spawnDrop(p, p.inv[slot], false);
       p.inv[slot] = null;
     }
   }
@@ -543,13 +668,12 @@ export class Room {
     let x = p.x, z = p.z;
     if (throwIt) {
       const d = viewDir(p.yaw, 0);
-      const hit = raycast(eye, d, 1.6, BOXES);
+      const hit = raycast(eye, d, 1.6, this.boxes);
       const dist = hit ? Math.max(0, hit.t - 0.3) : 1.6;
       x += d[0] * dist; z += d[2] * dist;
     }
-    const down = raycast([x, eye[1], z], [0, -1, 0], 20, BOXES);
-    const y = down ? eye[1] - down.t : 0;
-    return { x, y, z };
+    const down = raycast([x, eye[1], z], [0, -1, 0], 20, this.boxes);
+    return { x, y: down ? eye[1] - down.t : 0, z };
   }
 
   spawnDrop(p, item, throwIt) {
@@ -581,7 +705,7 @@ export class Room {
 
   tryPickup(p) {
     if (!p.alive) return;
-    if (p.team === 'T' && p.bomb && siteAt(p.x, p.z)) return;
+    if (p.team === 'T' && p.bomb && siteAt(this.map, p.x, p.z)) return;
     if (p.team === 'CT' && this.bomb.state === 'planted' && Math.hypot(p.x - this.bomb.x, p.z - this.bomb.z) < 2) return;
     let best = null, bestD = 2.2;
     for (const d of this.drops) {
@@ -589,11 +713,8 @@ export class Room {
       if (dist < bestD && Math.abs(d.y - p.y) < 2) { best = d; bestD = dist; }
     }
     if (!best) return;
-    const w = WEAPONS[best.item.id];
-    const slot = w.slot;
-    if (p.inv[slot]) {
-      this.drops.push({ id: this.nextEnt++, item: { ...p.inv[slot] }, x: p.x, y: p.y, z: p.z, noPick: p.id, noPickUntil: now() + 1.2 });
-    }
+    const slot = WEAPONS[best.item.id].slot;
+    if (p.inv[slot]) this.drops.push({ id: this.nextEnt++, item: { ...p.inv[slot] }, x: p.x, y: p.y, z: p.z, noPick: p.id, noPickUntil: now() + 1.2 });
     p.inv[slot] = best.item;
     p.slot = slot;
     p.reloadUntil = 0;
@@ -629,11 +750,10 @@ export class Room {
   // ---------- compras ----------
   canBuy(p) {
     if (!p.alive || p.team === 'SPEC') return false;
-    const t = now();
-    if (this.phase === 'warmup') return true;
+    if (this.phase === 'warmup' || this.phase === 'mapvote') return true;
     if (this.phase !== 'freeze' && this.phase !== 'live') return false;
-    if (t > this.buyEnd) return false;
-    const c = SPAWN_CENTER[p.team];
+    if (now() > this.buyEnd) return false;
+    const c = this.map.spawnCenter[p.team];
     return Math.hypot(p.x - c[0], p.z - c[1]) < BUY_RADIUS;
   }
 
@@ -657,10 +777,12 @@ export class Room {
       p.reloadUntil = 0;
       return true;
     }
-    if (NADES[id]) {
+    const n = NADES[id];
+    if (n) {
+      if (n.team && n.team !== p.team) return false;
       const total = NADE_ORDER.reduce((s, k) => s + p.nades[k], 0);
-      if (p.nades[id] >= NADES[id].max || total >= MAX_NADES) return false;
-      if (!pay(NADES[id].price)) return false;
+      if (p.nades[id] >= n.max || total >= MAX_NADES) return false;
+      if (!pay(n.price)) return false;
       p.nades[id]++;
       return true;
     }
@@ -672,8 +794,7 @@ export class Room {
     }
     if (id === 'vesthelm') {
       if (p.armor >= 100 && p.helmet) return false;
-      const cost = p.armor >= 100 ? 350 : EQUIPMENT.vesthelm.price;
-      if (!pay(cost)) return false;
+      if (!pay(p.armor >= 100 ? 350 : EQUIPMENT.vesthelm.price)) return false;
       p.armor = 100; p.helmet = true;
       return true;
     }
@@ -688,7 +809,7 @@ export class Room {
 
   // ---------- granadas ----------
   onThrow(p, m) {
-    if (!p.alive || this.phase === 'freeze') return;
+    if (!p.alive || this.phase === 'freeze' || this.phase === 'halftime') return;
     const g = String(m.g || '');
     if (!NADES[g] || p.nades[g] <= 0) return;
     const eye = [p.x, p.y + eyeHeight(p.crouch), p.z];
@@ -704,7 +825,8 @@ export class Room {
   throwNade(p, g, o, v) {
     p.nades[g]--;
     if (p.slot === 4 && !NADE_ORDER.some(k => p.nades[k] > 0)) p.slot = this.bestSlot(p);
-    const start = raycast(o, [v[0], v[1], v[2]].map(c => c / (Math.hypot(...v) || 1)), 0.3, BOXES) ? [p.x, p.y + 1.2, p.z] : o;
+    const len = Math.hypot(...v) || 1;
+    const start = raycast(o, v.map(c => c / len), 0.3, this.boxes) ? [p.x, p.y + 1.2, p.z] : o;
     this.nades.push({
       id: this.nextEnt++, type: g, x: start[0], y: start[1], z: start[2], vx: v[0], vy: v[1], vz: v[2],
       owner: p.id, team: p.team, born: now(), rest: 0,
@@ -718,17 +840,21 @@ export class Room {
     const sdt = dt / steps;
     for (let i = this.nades.length - 1; i >= 0; i--) {
       const n = this.nades[i];
-      for (let s = 0; s < steps; s++) {
+      const fire = n.type === 'molotov' || n.type === 'incgrenade';
+      let landed = false;
+      for (let s = 0; s < steps && !landed; s++) {
         n.vy -= GRAVITY * sdt;
         let bounced = false;
         for (const [k, vk] of [['x', 'vx'], ['y', 'vy'], ['z', 'vz']]) {
           const old = n[k];
           n[k] += n[vk] * sdt;
           const hitFloor = k === 'y' && n.y < R;
-          if (hitFloor || findOverlap(n.x, n.y - R, n.z, R, R * 2, BOXES)) {
+          if (hitFloor || findOverlap(n.x, n.y - R, n.z, R, R * 2, this.boxes)) {
+            const goingDown = k === 'y' && n[vk] < 0;
             n[k] = hitFloor ? R : old;
+            if (fire && goingDown) { landed = true; break; }
             n[vk] = -n[vk] * 0.42;
-            if (k !== 'y') { n.vy *= 0.8; } else { n.vx *= 0.7; n.vz *= 0.7; }
+            if (k !== 'y') n.vy *= 0.8; else { n.vx *= 0.7; n.vz *= 0.7; }
             if (Math.abs(n[vk]) > 1.2) bounced = true;
           }
         }
@@ -740,8 +866,11 @@ export class Room {
       const speed = Math.hypot(n.vx, n.vy, n.vz);
       if (speed < 0.4) n.rest += dt; else n.rest = 0;
       const age = t - n.born;
-      const fuse = n.type === 'smoke' ? (n.rest > 0.35 || age > 3.5) : age > 1.6;
-      if (fuse) {
+      let go;
+      if (n.type === 'smoke') go = n.rest > 0.35 || age > 3.5;
+      else if (fire) go = landed || age > 2.0;
+      else go = age > 1.6;
+      if (go) {
         this.nades.splice(i, 1);
         this.detonate(n, t);
       }
@@ -751,6 +880,19 @@ export class Room {
   detonate(n, t) {
     const pos = [n.x, n.y, n.z];
     const owner = this.players.get(n.owner) || null;
+    if (n.type === 'molotov' || n.type === 'incgrenade') {
+      const down = raycast([n.x, n.y + 0.2, n.z], [0, -1, 0], 30, this.boxes);
+      const fy = down ? n.y + 0.2 - down.t : 0;
+      // se apaga si cae sobre el humo o en el aire
+      if (this.smokes.some(s => Math.hypot(s.x - n.x, s.z - n.z) < 4) || n.y - fy > 2.5) {
+        this.broadcast({ t: 'boom', g: 'fizz', x: r2(n.x), y: r2(n.y), z: r2(n.z) });
+        return;
+      }
+      this.fires.push({ id: this.nextEnt++, x: n.x, y: fy, z: n.z, r: 3.2, until: t + 7, owner: n.owner, team: n.team });
+      this.nav.setDanger(this.fires);
+      this.broadcast({ t: 'boom', g: 'fire', x: r2(n.x), y: r2(fy), z: r2(n.z) });
+      return;
+    }
     this.broadcast({ t: 'boom', g: n.type, x: r2(n.x), y: r2(n.y), z: r2(n.z) });
     if (n.type === 'he') {
       const radius = 9;
@@ -761,36 +903,59 @@ export class Room {
         const dx = c[0] - pos[0], dy = c[1] - pos[1], dz = c[2] - pos[2];
         const d = Math.hypot(dx, dy, dz);
         if (d > radius) continue;
-        if (d > 0.1 && raycast(pos, [dx / d, dy / d, dz / d], d, BOXES)) continue;
+        if (d > 0.1 && raycast(pos, [dx / d, dy / d, dz / d], d, this.boxes)) continue;
         let dmg = 98 * (1 - d / radius) ** 1.4;
         let armor = 0;
         if (q.armor > 0) { armor = Math.min(q.armor, Math.round(dmg * 0.25)); dmg *= 0.58; }
         dmg = Math.round(dmg);
-        if (dmg > 0) this.applyDamage(q, owner, dmg, armor, 'he', false, pos);
+        if (dmg > 0) this.applyDamage(q, owner, dmg, armor, 'he', {}, pos);
       }
     } else if (n.type === 'smoke') {
-      this.smokes.push({ x: n.x, y: n.y + 1.2, z: n.z, until: t + 18 });
+      // el humo apaga el fuego
+      const before = this.fires.length;
+      this.fires = this.fires.filter(f => Math.hypot(f.x - n.x, f.z - n.z) > 4.5);
+      if (this.fires.length !== before) this.nav.setDanger(this.fires);
+      this.smokes.push({ id: this.nextEnt++, x: n.x, y: n.y + 1.2, z: n.z, until: t + 18 });
     } else if (n.type === 'flash') {
       for (const b of this.players.values()) {
         if (!b.isBot || !b.alive) continue;
         const e = [b.x, b.y + eyeHeight(b.crouch), b.z];
         const dx = pos[0] - e[0], dy = pos[1] - e[1], dz = pos[2] - e[2];
         const d = Math.hypot(dx, dy, dz);
-        if (d > 30 || raycast(e, [dx / d, dy / d, dz / d], d, BOXES)) continue;
+        if (d > 30 || raycast(e, [dx / d, dy / d, dz / d], d, this.boxes)) continue;
         const v = viewDir(b.yaw, b.pitch);
         const dot = (v[0] * dx + v[1] * dy + v[2] * dz) / d;
-        const dur = (dot > 0.5 ? 3.5 : dot > 0 ? 2 : 0.6) * (1 - d / 30);
-        b.flashedUntil = Math.max(b.flashedUntil, t + dur);
+        b.flashedUntil = Math.max(b.flashedUntil, t + (dot > 0.5 ? 3.5 : dot > 0 ? 2 : 0.6) * (1 - d / 30));
       }
     }
   }
 
-  // ¿Línea de visión libre (mapa + humo)?
+  updateFires(dt, t) {
+    if (!this.fires.length) return;
+    const before = this.fires.length;
+    this.fires = this.fires.filter(f => f.until > t);
+    if (this.fires.length !== before) this.nav.setDanger(this.fires);
+    for (const q of this.players.values()) {
+      if (!q.alive) continue;
+      let inFire = null;
+      for (const f of this.fires) if (Math.hypot(q.x - f.x, q.z - f.z) < f.r && Math.abs(q.y - f.y) < 1.5) { inFire = f; break; }
+      if (!inFire) { q.fireAcc = 0; continue; }
+      const owner = this.players.get(inFire.owner) || null;
+      if (owner && owner !== q && owner.team === q.team) continue;
+      q.fireAcc += 40 * dt;
+      if (q.fireAcc >= 8) {
+        const d = Math.floor(q.fireAcc);
+        q.fireAcc -= d;
+        this.applyDamage(q, owner, d, 0, inFire.team === 'CT' ? 'incgrenade' : 'molotov', {}, [inFire.x, inFire.y, inFire.z]);
+      }
+    }
+  }
+
   los(a, b) {
     const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
     const d = Math.hypot(dx, dy, dz);
     if (d < 1e-3) return true;
-    if (raycast(a, [dx / d, dy / d, dz / d], d, BOXES)) return false;
+    if (raycast(a, [dx / d, dy / d, dz / d], d, this.boxes)) return false;
     for (const s of this.smokes) if (segmentHitsSphere(a, b, [s.x, s.y, s.z], 3.6)) return false;
     return true;
   }
@@ -802,7 +967,7 @@ export class Room {
       return;
     }
     if (!p.action) {
-      if (p.team === 'T' && p.bomb && this.phase === 'live' && siteAt(p.x, p.z) && p.y < 3) {
+      if (p.team === 'T' && p.bomb && this.phase === 'live' && siteAt(this.map, p.x, p.z) && p.y < 3) {
         p.action = { type: 'plant', start: t, x: p.x, z: p.z };
         this.broadcast({ t: 'snd', s: 'plantstart', x: r2(p.x), y: r2(p.y + 0.5), z: r2(p.z) });
       } else if (p.team === 'CT' && this.bomb.state === 'planted' && !this.bomb.defuser &&
@@ -838,10 +1003,11 @@ export class Room {
   plantBomb(p, t) {
     p.bomb = false;
     if (p.slot === 5) p.slot = this.bestSlot(p);
-    const site = siteAt(p.x, p.z);
+    const site = siteAt(this.map, p.x, p.z);
     this.bomb = { state: 'planted', x: p.x, y: p.y, z: p.z, site, explodeAt: t + T.bomb, plantedAt: t, defuser: null, planter: p.id };
     this.phaseEnd = this.bomb.explodeAt;
     p.money = Math.min(ECONOMY.max, p.money + ECONOMY.plantBonus);
+    p.st.score += 2;
     this.centerMsg(`¡La bomba ha sido plantada en el sitio ${site}!`, 'bomb');
     this.broadcast({ t: 'planted', site, x: r2(p.x), y: r2(p.y), z: r2(p.z) });
     for (const q of this.players.values()) if (q.isBot) q.ai.onBombPlanted();
@@ -851,13 +1017,13 @@ export class Room {
     this.bomb.state = 'defused';
     this.bomb.defuser = null;
     p.money = Math.min(ECONOMY.max, p.money + 300);
+    p.st.score += 2;
     this.broadcast({ t: 'defused', id: p.id });
     this.endRound('CT', 'defuse', p);
   }
 
   updateBomb(t) {
-    if (this.bomb.state !== 'planted') return;
-    if (t < this.bomb.explodeAt) return;
+    if (this.bomb.state !== 'planted' || t < this.bomb.explodeAt) return;
     const b = this.bomb;
     b.state = 'exploded';
     this.broadcast({ t: 'boom', g: 'c4', x: r2(b.x), y: r2(b.y), z: r2(b.z) });
@@ -870,44 +1036,133 @@ export class Room {
       if (dmg < 1) continue;
       let armor = 0;
       if (q.armor > 0) { armor = Math.min(q.armor, Math.round(dmg * 0.25)); dmg *= 0.5; }
-      this.applyDamage(q, planter && planter.team !== q.team ? planter : null, Math.round(dmg), armor, 'bomb', false, [b.x, b.y, b.z]);
+      this.applyDamage(q, planter && planter.team !== q.team ? planter : null, Math.round(dmg), armor, 'bomb', {}, [b.x, b.y, b.z]);
     }
     if (this.phase === 'live') this.endRound('T', 'bomb', planter);
   }
 
-  // ---------- rondas ----------
+  // ---------- veto de mapas (estilo Premier) ----------
+  startVote() {
+    this.phase = 'mapvote';
+    this.vote = { pool: [...MAP_IDS], banned: {}, turn: 0, turnEnd: now() + T.voteTurn, votes: new Map(), result: null };
+    if (!this.teamHumans(this.voteTeam())) this.vote.turnEnd = now() + 2.5;
+    this.broadcastVote();
+  }
+
+  voteTeam() { return this.vote ? BAN_ORDER[this.vote.turn] : null; }
+
+  remainingMaps() { return this.vote.pool.filter(id => !this.vote.banned[id]); }
+
+  onVote(p, mapId) {
+    const v = this.vote;
+    if (this.phase !== 'mapvote' || !v || v.result) return;
+    if (p.team !== this.voteTeam() || !this.remainingMaps().includes(mapId)) return;
+    v.votes.set(p.id, mapId);
+    const humans = this.teamMembers(p.team).filter(q => !q.isBot);
+    if (humans.every(q => v.votes.has(q.id))) v.turnEnd = Math.min(v.turnEnd, now() + 1);
+    this.broadcastVote();
+  }
+
+  resolveVoteTurn() {
+    const v = this.vote;
+    const team = this.voteTeam();
+    const tally = {};
+    for (const [pid, m] of v.votes) {
+      const q = this.players.get(pid);
+      if (q && q.team === team) tally[m] = (tally[m] || 0) + 1;
+    }
+    const remaining = this.remainingMaps();
+    let max = 0, cands = [];
+    for (const m of remaining) {
+      const c = tally[m] || 0;
+      if (c > max) { max = c; cands = [m]; } else if (c === max) cands.push(m);
+    }
+    const ban = pick(max > 0 ? cands : remaining);
+    v.banned[ban] = team;
+    v.votes = new Map();
+    v.turn++;
+    if (this.remainingMaps().length === 1) {
+      v.result = this.remainingMaps()[0];
+      v.turnEnd = now() + T.voteReveal;
+
+    } else {
+      v.turnEnd = now() + T.voteTurn;
+      // equipos sin humanos vetan solos
+      if (!this.teamHumans(this.voteTeam())) v.turnEnd = now() + 2.5;
+    }
+    this.broadcastVote();
+  }
+
+  mapTitle(id) { return getMap(id).title; }
+
+  voteState() {
+    const v = this.vote;
+    if (!v) return null;
+    const counts = {};
+    for (const m of v.votes.values()) counts[m] = (counts[m] || 0) + 1;
+    return { pool: v.pool, banned: v.banned, turn: this.voteTeam(), turnEnd: Math.round(v.turnEnd * 1000), counts, result: v.result, n: v.turn };
+  }
+
+  broadcastVote() { this.broadcast({ t: 'vote', v: this.voteState() }); }
+
+  // ---------- partida ----------
   bothTeamsPresent() {
     return this.teamMembers('T').length > 0 && this.teamMembers('CT').length > 0;
   }
 
+  played() { return this.score.T + this.score.CT; }
+
+  // Rondas necesarias para ganar, según las rondas ya jugadas antes de la actual.
+  winTarget(playedBefore = this.played()) {
+    if (playedBefore < 24) return 13;
+    return 13 + 3 * (Math.floor((playedBefore - 24) / 6) + 1);
+  }
+
+  startMatch(mapId) {
+    this.loadMap(mapId);
+    this.broadcast({ t: 'map', id: mapId });
+    this.vote = null;
+    this.round = 0;
+    this.score = { T: 0, CT: 0 };
+    this.lossStreak = { T: 1, CT: 1 };
+    this.history = [];
+    this.matchOver = null;
+    this.records.clear();
+    for (const p of this.players.values()) {
+      p.money = ECONOMY.start;
+      p.st = emptyStats();
+      this.resetInventory(p);
+      p.alive = false;
+    }
+    this.centerMsg('¡Comienza la partida competitiva!', 'info');
+    this.startRound();
+  }
+
+  swapTeams(money) {
+    for (const p of this.players.values()) {
+      if (p.team === 'T') p.team = 'CT'; else if (p.team === 'CT') p.team = 'T';
+      p.money = money;
+      this.resetInventory(p);
+      p.alive = false;
+    }
+    for (const r of this.records.values()) r.team = other(r.team);
+    this.score = { T: this.score.CT, CT: this.score.T };
+    this.lossStreak = { T: 1, CT: 1 };
+  }
+
   startRound() {
     const t = now();
-    if (this.halftimePending) {
-      this.halftimePending = false;
-      for (const p of this.players.values()) {
-        if (p.team === 'T') p.team = 'CT'; else if (p.team === 'CT') p.team = 'T';
-        p.money = ECONOMY.start;
-        this.resetInventory(p);
-        p.alive = false;
-      }
-      this.score = { T: this.score.CT, CT: this.score.T };
-      this.lossStreak = { T: 0, CT: 0 };
-      this.centerMsg('Descanso: cambio de bandos', 'info');
-    }
     this.round++;
     this.rebalanceBots(true);
-    this.drops = [];
-    this.nades = [];
-    this.smokes = [];
-    this.bomb = { state: 'none' };
+    this.resetRoundState();
     this.phase = 'freeze';
     this.phaseEnd = t + T.freeze;
     this.buyEnd = t + T.buy;
     for (const team of ['T', 'CT']) {
-      const members = shuffle(this.teamMembers(team));
-      members.forEach((p, i) => {
+      shuffle(this.teamMembers(team)).forEach((p, i) => {
         if (!p.alive) this.resetInventory(p);
         p.bomb = false;
+        p.roundKills = 0;
         this.spawn(p, i);
       });
     }
@@ -915,12 +1170,19 @@ export class Room {
     if (ts.length) {
       const humans = ts.filter(p => !p.isBot);
       const pool = humans.length && Math.random() < 0.7 ? humans : ts;
-      const carrier = pool[(Math.random() * pool.length) | 0] || ts[0];
+      const carrier = pool[(Math.random() * pool.length) | 0];
       carrier.bomb = true;
       this.bomb = { state: 'carried', carrier: carrier.id };
-      this.send(carrier, { t: 'msg', text: 'Llevas la bomba (5). Plántala en A o B con E', kind: 'info' });
+      this.send(carrier, { t: 'msg', text: 'Llevas la bomba [5]. Plántala en A o B manteniendo E', kind: 'info' });
     }
-    this.broadcast({ t: 'rstart', r: this.round, sc: this.score });
+    const target = this.winTarget();
+    let banner = '';
+    if (this.score.T === target - 1 && this.score.CT === target - 1) banner = 'Punto de partida para ambos equipos';
+    else if (this.score.T === target - 1 || this.score.CT === target - 1) banner = 'Punto de partida';
+    else if (this.played() === 11) banner = 'Última ronda de la primera mitad';
+    else if (this.played() >= 24 && (this.played() - 24) % 6 === 2) banner = 'Última ronda de la mitad de la prórroga';
+    if (this.played() === 24 && this.score.T === 12) banner = 'Prórroga';
+    this.broadcast({ t: 'rstart', r: this.round, sc: this.score, banner });
     for (const p of this.players.values()) if (p.isBot && p.alive) p.ai.onRoundStart();
     this.sendRoster();
   }
@@ -932,46 +1194,68 @@ export class Room {
     this.phase = 'post';
     this.phaseEnd = t + T.post;
     this.score[winner]++;
-    this.lossStreak[winner] = 0;
-    this.lossStreak[loser] = Math.min(this.lossStreak[loser] + 1, 5);
+    this.history.push({ w: winner, r: reason });
     const winMoney = reason === 'bomb' || reason === 'defuse' ? ECONOMY.winObjective : ECONOMY.win;
-    let lossMoney = Math.min(ECONOMY.lossMax, ECONOMY.lossBase + ECONOMY.lossStep * (this.lossStreak[loser] - 1));
+    const lossMoney = Math.min(ECONOMY.lossMax, ECONOMY.lossBase + ECONOMY.lossStep * (this.lossStreak[loser] - 1));
     for (const p of this.players.values()) {
       if (p.team === winner) p.money = Math.min(ECONOMY.max, p.money + winMoney);
       else if (p.team === loser) {
+        // los T que sobreviven al tiempo no cobran (regla competitiva)
+        if (reason === 'time' && p.team === 'T' && p.alive) continue;
         let m = lossMoney;
         if (loser === 'T' && this.bomb.planter) m += ECONOMY.plantLossBonus;
         p.money = Math.min(ECONOMY.max, p.money + m);
       }
+      if (p.team === winner || p.team === loser) p.st.roundsPlayed = (p.st.roundsPlayed || 0) + 1;
     }
-    // MVP: el héroe del objetivo o quien más bajas hizo en la ronda
-    const mvp = hero && hero.team === winner ? hero : null;
-    if (mvp) mvp.mvps++;
-    this.broadcast({ t: 'rend', w: winner, r: reason, sc: this.score, mvp: mvp ? mvp.id : -1 });
-    if (this.score[winner] >= WIN_ROUNDS) {
+    this.lossStreak[winner] = Math.max(1, this.lossStreak[winner] - 1);
+    this.lossStreak[loser] = Math.min(this.lossStreak[loser] + 1, 5);
+    // MVP: el héroe del objetivo o quien más bajas hizo
+    let mvp = hero && hero.team === winner ? hero : null;
+    if (!mvp) {
+      let best = 0;
+      for (const p of this.players.values()) if (p.team === winner && p.roundKills > best) { best = p.roundKills; mvp = p; }
+    }
+    if (mvp) { mvp.st.mvps++; }
+    const mvpReason = !mvp ? '' : mvp === hero ? (reason === 'defuse' ? 'por desactivar la bomba' : 'por plantar la bomba') : `por ${mvp.roundKills} baja${mvp.roundKills === 1 ? '' : 's'}`;
+    this.broadcast({ t: 'rend', w: winner, r: reason, sc: this.score, mvp: mvp ? mvp.id : -1, mvpWhy: mvpReason, hist: this.history });
+    for (const p of this.players.values()) if (!p.isBot && p.alive) this.sendDamageReport(p);
+    const p = this.played();
+    const target = this.winTarget(p - 1);
+    if (this.score[winner] >= target) {
       this.matchOver = winner;
-      this.phaseEnd = t + T.matchEnd;
-      this.centerMsg(`¡${winner === 'T' ? 'Los Terroristas' : 'Los Antiterroristas'} ganan la partida!`, 'match');
-    } else if (this.round === HALF_ROUNDS) {
-      this.halftimePending = true;
+    } else if (p === 12) {
+      this.pendingSwap = ECONOMY.start;
+    } else if (p >= 24 && (p - 24) % 3 === 0) {
+      // prórroga: cambio de lado en cada mitad y dinero de prórroga
+      this.pendingSwap = ECONOMY.overtimeStart;
+      if ((p - 24) % 6 === 0) this.pendingSwapNoSwap = true;
     }
     this.sendRoster();
   }
 
-  resetMatch() {
-    this.round = 0;
-    this.score = { T: 0, CT: 0 };
-    this.lossStreak = { T: 0, CT: 0 };
-    this.matchOver = null;
-    this.halftimePending = false;
-    for (const p of this.players.values()) {
-      p.money = ECONOMY.start;
-      p.kills = p.deaths = p.assists = p.mvps = 0;
-      this.resetInventory(p);
-      p.alive = false;
+  finishMatch() {
+    const winner = this.matchOver;
+    this.phase = 'matchend';
+    this.phaseEnd = now() + T.matchEnd;
+    const rounds = Math.max(1, this.played());
+    const players = [...this.players.values()].filter(p => p.team === 'T' || p.team === 'CT');
+    let mvp = null;
+    for (const p of players) if (!mvp || p.st.score > mvp.st.score) mvp = p;
+    const results = [];
+    for (const p of players) {
+      const won = p.team === winner;
+      const adr = p.st.dmg / rounds;
+      let delta = 0;
+      if (!p.isBot) {
+        delta = (won ? 22 : -20) + clamp((adr - 75) / 8, -6, 6) + clamp((p.st.kills - p.st.deaths) * 0.6, -6, 6);
+        delta = Math.round(delta);
+      }
+      results.push({ id: p.id, n: p.name, tm: p.team, won, k: p.st.kills, d: p.st.deaths, a: p.st.assists, adr: Math.round(adr), hs: p.st.kills ? Math.round(p.st.hs / p.st.kills * 100) : 0, mvps: p.st.mvps, sc: p.st.score, delta, rt: p.rating + delta, bot: p.isBot ? 1 : 0 });
+      if (!p.isBot) p.rating += delta;
     }
-    this.centerMsg('¡Comienza la partida!', 'info');
-    this.startRound();
+    this.broadcast({ t: 'matchend', winner, score: this.score, mvp: mvp ? mvp.id : -1, results, map: this.map.id, rounds: this.history });
+    this.onMatchEnd?.(this, players.filter(p => !p.isBot), winner, rounds, results);
   }
 
   checkRoundEnd() {
@@ -984,20 +1268,35 @@ export class Room {
     else if (tAlive === 0 && this.bomb.state !== 'planted') this.endRound('CT', 'elim');
   }
 
-  enterWarmup() {
-    this.phase = 'warmup';
-    this.phaseEnd = now() + T.warmup;
-    this.round = 0;
-    this.score = { T: 0, CT: 0 };
-    this.bomb = { state: 'none' };
-    for (const p of this.players.values()) {
-      p.money = 10000;
-      if (p.team !== 'SPEC' && !p.alive) this.spawn(p, (Math.random() * 10) | 0);
+  // ---------- anfitrión y chat ----------
+  onHost(p, m) {
+    if (!this.isPrivate || p.account !== this.owner) return;
+    switch (m.action) {
+      case 'start':
+        if (this.phase === 'warmup') this.phaseEnd = now() + 3;
+        break;
+      case 'bots':
+        this.botTarget = clamp(m.n | 0, 0, 5);
+        this.rebalanceBots(this.phase !== 'live');
+        this.systemMsg(`Bots por equipo: ${this.botTarget}`);
+        this.sendRoster();
+        break;
+      case 'skill':
+        this.botSkill = clamp(num(m.s, 0.5), 0, 1);
+        for (const q of this.players.values()) if (q.isBot) q.ai.skill = this.botSkill;
+        this.systemMsg(`Dificultad de bots: ${Math.round(this.botSkill * 100)}%`);
+        break;
+      case 'restart':
+        this.systemMsg('El anfitrión reinició la partida');
+        this.phase = 'warmup';
+        this.phaseEnd = now() + 5;
+        this.score = { T: 0, CT: 0 };
+        this.history = [];
+        this.round = 0;
+        break;
     }
-    this.centerMsg('Calentamiento — esperando jugadores', 'info');
   }
 
-  // ---------- chat y comandos ----------
   onChat(p, m) {
     const t = now();
     p.chatTimes = p.chatTimes.filter(x => t - x < 5);
@@ -1005,82 +1304,55 @@ export class Room {
     p.chatTimes.push(t);
     const msg = String(m.msg || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 120);
     if (!msg) return;
-    if (msg[0] === '/' || msg[0] === '!') { this.command(p, msg.slice(1).split(/\s+/)); return; }
-    const out = { t: 'chat', id: p.id, name: p.name, team: p.team, msg, tm: m.tm ? 1 : 0, dead: p.alive ? 0 : 1 };
-    const s = JSON.stringify(out);
-    for (const q of this.players.values()) if (!m.tm || q.team === p.team) this.send(q, s);
+    if (msg[0] === '/') { this.command(p, msg.slice(1).split(/\s+/)); return; }
+    const out = JSON.stringify({ t: 'chat', id: p.id, name: p.name, team: p.team, msg, tm: m.tm ? 1 : 0, dead: p.alive ? 0 : 1 });
+    for (const q of this.players.values()) if (!m.tm || q.team === p.team) this.send(q, out);
   }
 
   command(p, [cmd, ...args]) {
     const reply = text => this.send(p, { t: 'chat', name: '', msg: text, sys: 1 });
-    const isAdmin = p.isAdmin || !this.config.adminPassword;
     switch ((cmd || '').toLowerCase()) {
-      case 'help':
-        reply('Comandos: /login <clave>, /bots <0-5>, /skill <0-1>, /kick <nombre>, /restart, /admin');
-        return;
-      case 'admin':
-        reply(`Administrador del servidor: ${this.config.adminEmail}`);
-        return;
-      case 'login':
-        if (this.config.adminPassword && args[0] === this.config.adminPassword) {
-          p.isAdmin = true;
-          reply('Sesión de administrador iniciada');
-        } else reply('Clave incorrecta');
+      case 'help': reply('Comandos: /admin, /rcon <clave>, /bots <0-5>, /restart, /kick <nombre>'); return;
+      case 'admin': reply(`Administrador del servidor: ${this.config.adminEmail}`); return;
+      case 'rcon':
+        if (this.config.adminPassword && args[0] === this.config.adminPassword) { p.isAdmin = true; reply('Acceso de administrador concedido'); }
+        else reply('Clave incorrecta');
         return;
     }
-    if (!isAdmin) { reply('Necesitas ser administrador (/login <clave>)'); return; }
+    if (!p.isAdmin) { reply('Necesitas /rcon <clave> para ese comando'); return; }
     switch ((cmd || '').toLowerCase()) {
-      case 'bots': {
-        const n = clamp(parseInt(args[0], 10) || 0, 0, 5);
-        this.botTarget = n;
-        this.rebalanceBots(this.phase !== 'live');
-        this.systemMsg(`Bots por equipo: ${n}`);
-        this.sendRoster();
-        break;
-      }
-      case 'skill': {
-        const s = clamp(parseFloat(args[0]) || 0.5, 0, 1);
-        this.botSkill = s;
-        for (const q of this.players.values()) if (q.isBot) q.ai.skill = s;
-        this.systemMsg(`Habilidad de bots: ${s}`);
-        break;
-      }
+      case 'bots': this.botTarget = clamp(parseInt(args[0], 10) || 0, 0, 5); this.rebalanceBots(this.phase !== 'live'); this.systemMsg(`Bots por equipo: ${this.botTarget}`); break;
+      case 'restart': this.phase = 'warmup'; this.phaseEnd = now() + 5; this.score = { T: 0, CT: 0 }; this.history = []; this.round = 0; this.systemMsg('Reiniciando…'); break;
       case 'kick': {
         const name = args.join(' ').toLowerCase();
-        for (const q of this.players.values()) {
-          if (q.name.toLowerCase() === name && q !== p) {
-            if (q.ws) { this.send(q, { t: 'kicked' }); q.ws.close(); } else this.removePlayer(q);
-            this.systemMsg(`${q.name} fue expulsado`);
-            break;
-          }
-        }
+        for (const q of this.players.values()) if (q.name.toLowerCase() === name && q !== p) { this.send(q, { t: 'kicked' }); q.session?.leaveRoom('expulsado'); break; }
         break;
       }
-      case 'restart':
-        this.systemMsg('Reiniciando partida...');
-        this.resetMatch();
-        break;
-      default:
-        reply('Comando desconocido. Usa /help');
+      default: reply('Comando desconocido');
     }
   }
 
   // ---------- bucle ----------
   computeSpotted() {
     const alive = [...this.players.values()].filter(p => p.alive);
+    const intel = { T: [], CT: [] };
     for (const q of alive) {
       q.spotted = false;
-      const c = [q.x, q.y + 1.2, q.z];
+      const pts = [[q.x, q.y + (q.crouch ? 1.1 : 1.6), q.z], [q.x, q.y + 1.0, q.z], [q.x, q.y + 0.3, q.z]];
       for (const e of alive) {
         if (e.team === q.team) continue;
         const eye = [e.x, e.y + eyeHeight(e.crouch), e.z];
-        if (Math.hypot(eye[0] - c[0], eye[2] - c[2]) > 80) continue;
-        if (this.los(eye, c)) { q.spotted = true; break; }
+        if (Math.hypot(eye[0] - q.x, eye[2] - q.z) > 90) continue;
+        if (pts.some(pt => this.los(eye, pt))) { q.spotted = true; break; }
       }
+      if (q.spotted && intel[q.team]) intel[q.team].push([q.x, q.z]);
     }
+    const t = now();
+    for (const k of ['T', 'CT']) if (intel[k].length) this.intel[k] = { t, points: intel[k] };
   }
 
   tick(dt) {
+    if (this.closed) return;
     const t = now();
     this.tickCount++;
     switch (this.phase) {
@@ -1089,20 +1361,47 @@ export class Room {
           if (!p.alive && p.team !== 'SPEC' && t - p.deadAt > T.warmupRespawn) { this.resetInventory(p); this.spawn(p, (Math.random() * 10) | 0); }
         }
         if (!this.bothTeamsPresent()) this.phaseEnd = Math.max(this.phaseEnd, t + 5);
-        else if (t >= this.phaseEnd) this.resetMatch();
+        else if (t >= this.phaseEnd) this.startVote();
+        break;
+      case 'mapvote':
+        for (const p of this.players.values()) {
+          if (!p.alive && p.team !== 'SPEC' && t - p.deadAt > T.warmupRespawn) { this.resetInventory(p); this.spawn(p, (Math.random() * 10) | 0); }
+        }
+        if (t >= this.vote.turnEnd) {
+          if (this.vote.result) this.startMatch(this.vote.result);
+          else this.resolveVoteTurn();
+        }
         break;
       case 'freeze':
         if (t >= this.phaseEnd) { this.phase = 'live'; this.phaseEnd = t + T.round; this.roundStartT = t; }
         break;
       case 'live':
-        if (!this.bothTeamsPresent()) { this.enterWarmup(); break; }
+        if (!this.bothTeamsPresent()) { this.phase = 'warmup'; this.phaseEnd = t + 10; break; }
         if (this.bomb.state !== 'planted' && t >= this.phaseEnd) this.endRound('CT', 'time');
         break;
       case 'post':
         if (t >= this.phaseEnd) {
-          if (!this.bothTeamsPresent()) this.enterWarmup();
-          else if (this.matchOver) this.resetMatch();
+          if (this.matchOver) this.finishMatch();
+          else if (this.pendingSwap) { this.phase = 'halftime'; this.phaseEnd = t + T.halftime; this.centerMsg('Descanso', 'info'); this.sendRoster(); }
           else this.startRound();
+        }
+        break;
+      case 'halftime':
+        if (t >= this.phaseEnd) {
+          if (this.pendingSwapNoSwap) {
+            for (const p of this.players.values()) { p.money = this.pendingSwap; this.resetInventory(p); p.alive = false; }
+          } else this.swapTeams(this.pendingSwap);
+          this.pendingSwap = null;
+          this.pendingSwapNoSwap = false;
+          this.centerMsg('Cambio de bando', 'info');
+          this.startRound();
+        }
+        break;
+      case 'matchend':
+        if (t >= this.phaseEnd) {
+          for (const p of this.humans()) p.session?.leaveRoom('fin');
+          this.close();
+          return;
         }
         break;
     }
@@ -1117,6 +1416,7 @@ export class Room {
       this.updateUse(p, t);
     }
     this.updateNades(dt, t);
+    this.updateFires(dt, t);
     this.autoPickups(t);
     if (this.tickCount % 4 === 0) this.computeSpotted();
     if (this.tickCount % 2 === 0) this.sendSnapshots(t);
@@ -1125,16 +1425,25 @@ export class Room {
 
   timeLeft(t) {
     if (this.phase === 'live' && this.bomb.state === 'planted') return Math.max(0, this.bomb.explodeAt - t);
+    if (this.phase === 'mapvote' && this.vote) return Math.max(0, this.vote.turnEnd - t);
     return Math.max(0, this.phaseEnd - t);
   }
 
+  // Anti-wallhack: solo se envían enemigos visibles para el equipo, cercanos o muertos.
+  visibleTo(viewer, q) {
+    if (viewer.team === 'SPEC' || q.team === viewer.team || !q.alive) return true;
+    if (this.phase === 'warmup' || this.phase === 'mapvote' || this.phase === 'post' || this.phase === 'matchend') return true;
+    if (q.spotted) return true;
+    return Math.hypot(q.x - viewer.x, q.z - viewer.z) < 20;
+  }
+
   sendSnapshots(t) {
-    const players = [];
+    const entries = [];
     for (const p of this.players.values()) {
       if (p.team === 'SPEC') continue;
       const flags = (p.alive ? 1 : 0) | (p.crouch ? 2 : 0) | (p.spotted ? 4 : 0) | (p.bomb ? 8 : 0) |
-        (p.action ? 16 : 0) | (p.scoped ? 32 : 0) | (p.reloadUntil ? 64 : 0);
-      players.push([p.id, r2(p.x), r2(p.y), r2(p.z), r3(p.yaw), r3(p.pitch), flags, this.weaponIdOf(p), p.hp]);
+        (p.action ? 16 : 0) | (p.scoped ? 32 : 0) | (p.reloadUntil ? 64 : 0) | (p.defuser ? 128 : 0) | (p.walking ? 256 : 0);
+      entries.push([p, JSON.stringify([p.id, r2(p.x), r2(p.y), r2(p.z), r3(p.yaw), r3(p.pitch), flags, this.weaponIdOf(p), p.hp])]);
     }
     const b = this.bomb;
     const bomb = b.state === 'none' ? null : {
@@ -1142,45 +1451,53 @@ export class Room {
       tl: b.state === 'planted' ? r2(Math.max(0, b.explodeAt - t)) : 0,
       dp: b.defuser ? r2(clamp((t - b.defuseStart) / (b.defuseKit ? T.defuseKit : T.defuse), 0, 1)) : -1,
     };
-    const common = {
+    const common = JSON.stringify({
       t: 's', time: Math.round(t * 1000), ph: this.phase, tl: r2(this.timeLeft(t)), sc: this.score, rn: this.round,
-      p: players, b: bomb,
+      b: bomb,
       n: this.nades.map(n => [n.id, n.type, r2(n.x), r2(n.y), r2(n.z)]),
       d: this.drops.map(d => [d.id, d.item.id, r2(d.x), r2(d.y), r2(d.z)]),
-    };
-    const base = JSON.stringify(common).slice(0, -1);
+      sm: this.smokes.map(s => [s.id, r2(s.x), r2(s.y), r2(s.z), r2(s.until - t)]),
+      fi: this.fires.map(f => [f.id, r2(f.x), r2(f.y), r2(f.z), f.r, r2(f.until - t)]),
+    }).slice(0, -1);
     for (const p of this.players.values()) {
-      if (!p.ws) continue;
+      if (!p.session) continue;
+      const list = entries.filter(([q]) => this.visibleTo(p, q)).map(e => e[1]).join(',');
       const me = {
         hp: p.hp, ar: p.armor, hm: p.helmet ? 1 : 0, mo: p.money, sl: p.slot, tm: p.team, al: p.alive ? 1 : 0, sp: p.spawnSeq,
         i1: p.inv[1] ? [p.inv[1].id, p.inv[1].mag, p.inv[1].res] : null,
         i2: p.inv[2] ? [p.inv[2].id, p.inv[2].mag, p.inv[2].res] : null,
-        nd: [p.nades.he, p.nades.flash, p.nades.smoke], bm: p.bomb ? 1 : 0, df: p.defuser ? 1 : 0,
+        nd: NADE_ORDER.map(k => p.nades[k]), bm: p.bomb ? 1 : 0, df: p.defuser ? 1 : 0,
         rl: p.reloadUntil ? r2(Math.max(0, p.reloadUntil - t)) : 0,
         act: p.action ? p.action.type : 0, pr: r2(this.actionProgress(p, t)), cb: this.canBuy(p) ? 1 : 0,
         bt: r2(Math.max(0, this.buyEnd - t)),
       };
-      this.send(p, base + ',"me":' + JSON.stringify(me) + '}');
+      p.session.send(common + ',"p":[' + list + '],"me":' + JSON.stringify(me) + '}');
     }
   }
 
   sendRoster() {
     const list = [...this.players.values()];
+    const rounds = Math.max(1, this.played());
     for (const viewer of list) {
-      if (!viewer.ws) continue;
+      if (!viewer.session) continue;
       const players = list.map(p => ({
-        id: p.id, n: p.name, tm: p.team, b: p.isBot ? 1 : 0, k: p.kills, d: p.deaths, a: p.assists, mvp: p.mvps,
-        pg: p.isBot ? 0 : p.ping, al: p.alive ? 1 : 0,
+        id: p.id, n: p.name, tm: p.team, b: p.isBot ? 1 : 0, k: p.st.kills, d: p.st.deaths, a: p.st.assists, mvp: p.st.mvps,
+        sc: p.st.score, adr: Math.round(p.st.dmg / rounds), hs: p.st.kills ? Math.round(p.st.hs / p.st.kills * 100) : 0,
+        pg: p.isBot ? 0 : p.ping, al: p.alive ? 1 : 0, rt: p.isBot ? 0 : p.rating, party: p.partyId,
         m: p.team === viewer.team || viewer.team === 'SPEC' ? p.money : -1,
+        kit: p.team === viewer.team && p.defuser ? 1 : 0, bm: p.team === viewer.team && p.bomb ? 1 : 0,
       }));
-      this.send(viewer, { t: 'roster', players, sc: this.score, rn: this.round, bots: this.botTarget });
+      this.send(viewer, {
+        t: 'roster', players, sc: this.score, rn: this.round, bots: this.botTarget, hist: this.history,
+        ph: this.phase, map: this.map.id, owner: this.owner, private: this.isPrivate, target: this.winTarget(),
+      });
     }
   }
 
   info() {
     return {
-      name: this.name, humans: this.humanCount(), players: this.players.size, round: this.round,
-      score: this.score, phase: this.phase, maxHumans: this.config.maxHumans,
+      id: this.id, private: this.isPrivate, humans: this.humanCount(), players: this.players.size, round: this.round,
+      score: this.score, phase: this.phase, map: this.map.id,
     };
   }
 }
